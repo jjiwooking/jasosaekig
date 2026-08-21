@@ -1,4 +1,4 @@
-# Career Essay AI v0.4.0
+# Career Essay AI v0.4.1
 
 한 기업의 지원서를 하나의 워크스페이스에서 완성하는 Streamlit + Supabase 자기소개서 프로그램입니다.
 
@@ -86,4 +86,4 @@ GEMINI_FALLBACK_MODELS="..."
 
 v0.2.4의 캐시 테이블 업그레이드를 이미 실행했다면 **추가 SQL 실행은 필요 없습니다.**
 
-GitHub 코드만 v0.4.0으로 전체 덮어쓴 뒤 Commit & Push하면 됩니다.
+GitHub 코드만 v0.4.1으로 전체 덮어쓴 뒤 Commit & Push하면 됩니다.

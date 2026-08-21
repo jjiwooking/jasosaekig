@@ -5,7 +5,7 @@ import html
 
 import streamlit as st
 
-from modules.ai_client import AIServiceError, generate_json
+from modules.ai_client import generate_json
 from modules.document_parser import extract_text
 from modules.prompts import (
     allocation_prompt,
@@ -60,7 +60,7 @@ from modules.web_ingest import fetch_url_text
 
 APP_TITLE = "Career Essay AI"
 APP_SUBTITLE = "한 기업을 분석하고, 내 경험으로 바로 자소서를 완성합니다"
-VERSION = "v0.4.0"
+VERSION = "v0.4.1"
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -228,14 +228,15 @@ def run_application_analysis(user_id: str, project: dict, sources: list[dict]) -
 
 
 def render_ai_error(exc: Exception):
-    if isinstance(exc, AIServiceError):
-        st.error(str(exc))
-        if exc.code in {429, 503}:
-            st.info("웹에서 찾은 자료는 이미 저장돼 있습니다. 잠시 후 **AI 분석만 다시 시도**하면 검색 크레딧은 추가로 사용하지 않습니다.")
+    """AI client 버전이 일부 섞여도 앱 시작/오류표시가 깨지지 않도록 느슨하게 처리한다."""
+    st.error(str(exc))
+    code = getattr(exc, "code", None)
+    attempts = getattr(exc, "model_attempts", None)
+    if code in {429, 503}:
+        st.info("웹에서 찾은 자료는 이미 저장돼 있습니다. 잠시 후 **AI 분석만 다시 시도**하면 검색 크레딧은 추가로 사용하지 않습니다.")
+    if attempts:
         with st.expander("오류 상세", expanded=False):
-            st.json(exc.model_attempts or [])
-    else:
-        st.error(str(exc))
+            st.json(attempts)
 
 
 def sync_profile_experiences(user_id: str, structured: dict) -> int:
