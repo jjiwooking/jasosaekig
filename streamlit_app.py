@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import json
+import html
 
-import pandas as pd
 import streamlit as st
 
-from modules.ai_client import generate_json
+from modules.ai_client import AIServiceError, generate_json
 from modules.document_parser import extract_text
 from modules.prompts import (
     allocation_prompt,
+    application_analysis_prompt,
     candidate_structure_prompt,
-    company_analysis_prompt,
     essay_writer_prompt,
     experience_structure_prompt,
-    job_analysis_prompt,
+    fact_check_prompt,
+    final_edit_prompt,
     question_analysis_prompt,
-    review_prompt,
+    recruiter_review_prompt,
 )
 from modules.repetition import local_repetition_report
 from modules.repository import (
@@ -30,8 +31,8 @@ from modules.repository import (
     delete_source,
     get_allocation,
     get_analysis,
-    get_monthly_research_usage,
     get_candidate_profile,
+    get_monthly_research_usage,
     get_project,
     instruction_context,
     list_drafts,
@@ -54,46 +55,63 @@ from modules.recruiting_search import (
     is_available as recruiting_search_available,
     research_company_sources,
     research_job_sources,
-    search_recruiting_sources,
 )
 from modules.web_ingest import fetch_url_text
 
-
 APP_TITLE = "Career Essay AI"
-APP_SUBTITLE = "기업을 이해하고 · 채용직무를 해석하고 · 내 경험으로 자소서를 완성합니다"
-VERSION = "v0.2.4"
+APP_SUBTITLE = "한 기업을 분석하고, 내 경험으로 바로 자소서를 완성합니다"
+VERSION = "v0.4.0"
 
-st.set_page_config(page_title=APP_TITLE, page_icon="📝", layout="wide")
-
+st.set_page_config(
+    page_title=APP_TITLE,
+    page_icon="📝",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # =========================================================
-# Styling
+# Calm, workspace-first UI
 # =========================================================
 st.markdown(
     """
     <style>
-      .block-container {max-width: 1380px; padding-top: 1.25rem; padding-bottom: 4rem;}
-      .hero {padding: 22px 24px; border:1px solid #e5e7eb; border-radius:18px; background:#ffffff; margin-bottom:14px;}
-      .hero-title {font-size:30px; font-weight:800; letter-spacing:-0.7px; color:#111827;}
-      .hero-sub {font-size:14px; color:#64748b; margin-top:4px;}
-      .stage-card {border:1px solid #e5e7eb; border-radius:16px; padding:18px; background:#fff; min-height:128px;}
-      .stage-number {font-size:12px; font-weight:700; color:#64748b;}
-      .stage-title {font-size:19px; font-weight:800; color:#111827; margin-top:4px;}
-      .stage-desc {font-size:13px; color:#64748b; margin-top:6px; line-height:1.45;}
-      .result-box {border:1px solid #e5e7eb; border-radius:14px; padding:16px; background:#fff;}
-      .muted {font-size:13px; color:#64748b;}
-      .mini-label {font-size:12px; font-weight:700; color:#475569; margin-bottom:3px;}
-      .gate-pass {padding:8px 10px; border-radius:10px; background:#ecfdf5; color:#065f46; font-weight:700;}
-      .gate-partial {padding:8px 10px; border-radius:10px; background:#fffbeb; color:#92400e; font-weight:700;}
-      .gate-gap {padding:8px 10px; border-radius:10px; background:#fef2f2; color:#991b1b; font-weight:700;}
-      div[data-testid="stMetric"] {border:1px solid #e5e7eb; border-radius:14px; padding:12px; background:#fff;}
-      .stTabs [data-baseweb="tab-list"] {gap:8px;}
-      .stTabs [data-baseweb="tab"] {height:44px; border-radius:10px; padding-left:16px; padding-right:16px;}
+      .block-container {max-width: 1180px; padding-top: 1.2rem; padding-bottom: 4rem;}
+      h1,h2,h3 {letter-spacing:-0.035em;}
+      .app-head {padding:4px 0 18px 0; border-bottom:1px solid #edf0f4; margin-bottom:18px;}
+      .app-title {font-size:28px; font-weight:800; color:#111827;}
+      .app-sub {font-size:14px; color:#64748b; margin-top:5px;}
+      .project-line {display:flex; gap:10px; align-items:center; padding:12px 14px; border:1px solid #e5e7eb; border-radius:14px; background:#fff; margin-bottom:14px;}
+      .project-company {font-weight:800; color:#111827;}
+      .project-role {font-size:13px; color:#64748b;}
+      .step-wrap {display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:8px 0 22px 0;}
+      .step {padding:13px 16px; border:1px solid #e5e7eb; border-radius:14px; background:#f8fafc;}
+      .step.active {border-color:#2563eb; background:#eff6ff;}
+      .step.done {border-color:#bbf7d0; background:#f0fdf4;}
+      .step-kicker {font-size:11px; font-weight:800; color:#64748b;}
+      .step-title {font-size:17px; font-weight:800; color:#111827; margin-top:2px;}
+      .section-card {border:1px solid #e5e7eb; border-radius:14px; padding:16px; background:#fff; height:100%;}
+      .section-kicker {font-size:11px; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.04em;}
+      .section-title {font-size:16px; font-weight:800; color:#111827; margin-top:4px; margin-bottom:7px;}
+      .section-body {font-size:14px; color:#334155; line-height:1.6;}
+      .soft {padding:12px 14px; border-radius:12px; background:#f8fafc; color:#475569; font-size:13px; line-height:1.55;}
+      .good {padding:11px 13px; border-radius:12px; background:#f0fdf4; color:#166534; font-weight:700; font-size:13px;}
+      .warn {padding:11px 13px; border-radius:12px; background:#fffbeb; color:#92400e; font-weight:700; font-size:13px;}
+      .bad {padding:11px 13px; border-radius:12px; background:#fef2f2; color:#991b1b; font-weight:700; font-size:13px;}
+      .question-card {padding:14px 15px; border:1px solid #e5e7eb; border-radius:13px; background:#fff; margin-bottom:8px;}
+      .q-num {font-size:11px; font-weight:800; color:#2563eb;}
+      .q-text {font-size:14px; color:#111827; line-height:1.5; margin-top:4px;}
+      .q-meta {font-size:12px; color:#64748b; margin-top:5px;}
+      div[data-testid="stMetric"] {border:0; background:#f8fafc; border-radius:12px; padding:10px 12px;}
+      .stTabs [data-baseweb="tab-list"] {gap:18px; border-bottom:1px solid #e5e7eb;}
+      .stTabs [data-baseweb="tab"] {height:48px; padding:0 2px; background:transparent;}
+      .stTabs [aria-selected="true"] {font-weight:800;}
+      div[data-testid="stForm"] {border:1px solid #e5e7eb; border-radius:14px; padding:14px;}
+      .stButton > button {border-radius:11px; min-height:42px;}
+      textarea, input {border-radius:10px !important;}
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 
 # =========================================================
 # Helpers
@@ -102,18 +120,52 @@ def rerun():
     st.rerun()
 
 
-def pretty(data):
-    st.json(data or {}, expanded=False)
+def _as_list(value):
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _short_list(value, limit=4):
+    items = _as_list(value)
+    out = []
+    for item in items[:limit]:
+        if isinstance(item, dict):
+            text = (
+                item.get("point") or item.get("fact") or item.get("challenge") or item.get("task")
+                or item.get("competency") or item.get("intent") or item.get("item") or item.get("requirement")
+                or json.dumps(item, ensure_ascii=False)
+            )
+        else:
+            text = str(item)
+        if text:
+            out.append(text)
+    return out
+
+
+def _bullets(value, limit=5):
+    items = _short_list(value, limit)
+    if not items:
+        st.caption("확인된 내용이 없습니다.")
+        return
+    for item in items:
+        st.write(f"• {item}")
+
+
+def require_project():
+    if not st.session_state.get("user") or not st.session_state.get("project_id"):
+        st.info("왼쪽에서 지원서를 하나 선택하거나 새로 만들어주세요.")
+        st.stop()
+    project = get_project(st.session_state.user["id"], st.session_state.project_id)
+    if not project:
+        st.warning("지원서를 불러오지 못했습니다.")
+        st.stop()
+    return project
 
 
 def exp_view(row: dict) -> dict:
     s = row.get("structured") or {}
-    return {
-        "id": row.get("id"),
-        "title": row.get("title"),
-        "fact_status": row.get("fact_status"),
-        **s,
-    }
+    return {"id": row.get("id"), "title": row.get("title"), "fact_status": row.get("fact_status"), **s}
 
 
 def find_exp(experiences: list[dict], exp_id: str | None) -> dict:
@@ -130,23 +182,7 @@ def get_alloc_for_question(allocation: dict, question_id: str) -> dict:
     return {}
 
 
-def require_project():
-    user = st.session_state.get("user")
-    project_id = st.session_state.get("project_id")
-    if not user or not project_id:
-        st.info("왼쪽에서 지원 프로젝트를 먼저 선택하거나 새로 만들어주세요.")
-        st.stop()
-    project = get_project(user["id"], project_id)
-    if not project:
-        st.warning("지원 프로젝트를 불러오지 못했습니다.")
-        st.stop()
-    return project
-
-
-
-
 def save_auto_research_results(user_id: str, project_id: str, results: list[dict]) -> int:
-    """Persist grounded research without creating duplicates on every re-analysis."""
     existing = list_sources(user_id, project_id)
     existing_map = {
         ((row.get("url") or "").strip(), (row.get("title") or "").strip()): row
@@ -154,81 +190,152 @@ def save_auto_research_results(user_id: str, project_id: str, results: list[dict
     }
     saved = 0
     for item in results or []:
-        title = (item.get("title") or item.get("source_type") or "자동 웹 리서치").strip()
+        title = (item.get("title") or "웹 리서치 자료").strip()
         url = (item.get("url") or "").strip()
-        key = (url, title)
         content = (item.get("content") or item.get("snippet") or "").strip()
         if not content and not url:
             continue
-        source_type = item.get("source_type") or "Google Search 근거"
+        source_type = item.get("source_type") or "웹 리서치 근거"
         trust = item.get("trust_level") or "supported"
-        existing_row = existing_map.get(key)
-        if existing_row:
-            # Refresh the synthesis/snippet on re-analysis so the DB does not stay stale.
-            if content and content != (existing_row.get("content") or ""):
+        key = (url, title)
+        old = existing_map.get(key)
+        if old:
+            if content and content != (old.get("content") or ""):
                 update_source(
-                    user_id, project_id, existing_row["id"],
-                    source_type=source_type, title=title, content=content, url=url, trust_level=trust,
+                    user_id, project_id, old["id"], source_type=source_type,
+                    title=title, content=content, url=url, trust_level=trust,
                 )
             continue
         row = add_source(user_id, project_id, source_type, title, content, url, trust)
-        existing_map[key] = row or {"title": title, "url": url, "content": content}
+        existing_map[key] = row or {"url": url, "title": title}
         saved += 1
     return saved
 
-def stage_status(project_id: str) -> dict:
-    analysis = get_analysis(USER_ID, project_id)
-    qs = list_questions(USER_ID, project_id)
-    alloc = get_allocation(USER_ID, project_id)
-    drafts = list_drafts(USER_ID, project_id)
-    return {
-        "company": bool(analysis.get("company")),
-        "job": bool(analysis.get("job")),
-        "questions": bool(qs),
-        "question_analysis": bool(qs) and all(bool(q.get("analysis")) for q in qs),
-        "allocation": bool(alloc),
-        "drafts": bool(drafts),
-    }
+
+def run_application_analysis(user_id: str, project: dict, sources: list[dict]) -> dict:
+    instructions = instruction_context(user_id, project["id"], "analysis")
+    result = generate_json(application_analysis_prompt(
+        project["company"], project["position"], project.get("team") or "", sources, instructions
+    ))
+    company = result.get("company") or {}
+    job = result.get("job") or {}
+    # 채용분석 결과는 job 데이터에도 함께 넣어 기존 Writer 프롬프트와 호환한다.
+    job["recruiting"] = result.get("recruiting") or {}
+    save_analysis_section(user_id, project["id"], "company", company)
+    save_analysis_section(user_id, project["id"], "job", job)
+    save_analysis_section(user_id, project["id"], "application", result)
+    return result
 
 
-def render_stage_cards(project: dict):
-    status = stage_status(project["id"])
-    cols = st.columns(3, gap="medium")
-    cards = [
-        ("01", "기업분석", "회사의 사업·최근 변화·과제를 자소서용 근거로 정리", status["company"]),
-        ("02", "채용직무분석", "공고·직무기술서·지원조직 자료에서 실제 업무와 채용의도를 해석", status["job"]),
-        ("03", "자소서 완성", "문항 분석 → 하고 싶은 말 → 경험 매칭 → 소재 배분 → 작성·검토", status["drafts"]),
-    ]
-    for col, (num, title, desc, ok) in zip(cols, cards):
-        badge = "✅ 완료" if ok else "⬜ 진행 전"
-        col.markdown(
-            f'<div class="stage-card"><div class="stage-number">STEP {num} · {badge}</div>'
-            f'<div class="stage-title">{title}</div><div class="stage-desc">{desc}</div></div>',
-            unsafe_allow_html=True,
+def render_ai_error(exc: Exception):
+    if isinstance(exc, AIServiceError):
+        st.error(str(exc))
+        if exc.code in {429, 503}:
+            st.info("웹에서 찾은 자료는 이미 저장돼 있습니다. 잠시 후 **AI 분석만 다시 시도**하면 검색 크레딧은 추가로 사용하지 않습니다.")
+        with st.expander("오류 상세", expanded=False):
+            st.json(exc.model_attempts or [])
+    else:
+        st.error(str(exc))
+
+
+def sync_profile_experiences(user_id: str, structured: dict) -> int:
+    existing = list_experiences(user_id)
+    signatures = set()
+    for row in existing:
+        s = row.get("structured") or {}
+        signatures.add((
+            (row.get("title") or "").strip().lower(),
+            (s.get("period") or "").strip().lower(),
+            (s.get("organization") or "").strip().lower(),
+        ))
+    added = 0
+    for exp in structured.get("experiences", []) or []:
+        sig = (
+            (exp.get("title") or "경험").strip().lower(),
+            (exp.get("period") or "").strip().lower(),
+            (exp.get("organization") or "").strip().lower(),
+        )
+        if sig in signatures:
+            continue
+        add_experience(user_id, json.dumps(exp, ensure_ascii=False), exp)
+        signatures.add(sig)
+        added += 1
+    return added
+
+
+def latest_final(user_id: str, project_id: str, question_id: str) -> dict | None:
+    for row in list_drafts(user_id, project_id, question_id):
+        if row.get("draft_type") == "final":
+            return row
+    return None
+
+
+def analysis_ready(project_id: str) -> bool:
+    return bool((get_analysis(USER_ID, project_id) or {}).get("application"))
+
+
+def allocation_ready(project_id: str) -> bool:
+    return bool(get_allocation(USER_ID, project_id))
+
+
+def set_workspace_step(step: int):
+    st.session_state.workspace_step = int(step)
+
+
+def generate_complete_essay(project: dict, question: dict, allocation: dict, experiences: list[dict], profile: dict):
+    qa = question.get("analysis") or {}
+    alloc = get_alloc_for_question(allocation, question["id"])
+    exp = find_exp(experiences, alloc.get("primary_experience_id"))
+    company_data = (get_analysis(USER_ID, project["id"]) or {}).get("company") or {}
+    job_data = (get_analysis(USER_ID, project["id"]) or {}).get("job") or {}
+    prior = prior_used_materials(USER_ID, project["id"], question["id"])
+    instructions = instruction_context(USER_ID, project["id"], "essay", question["id"])
+    if question.get("custom_instruction"):
+        instructions = [*instructions, {"scope": "question", "instruction": question["custom_instruction"]}]
+
+    with st.status("자소서를 작성하고 검토하고 있습니다...", expanded=True) as status:
+        st.write("1/4 실제 경험과 문항 의도로 초안을 작성합니다.")
+        draft = generate_json(essay_writer_prompt(
+            question, qa, alloc, exp, company_data, job_data,
+            profile.get("structured") or {}, prior,
+            question.get("user_message") or "", profile.get("style_sample") or "", instructions,
+        ))
+        if draft.get("status") == "needs_information":
+            status.update(label="추가 사실이 필요합니다.", state="error")
+            return {"needs_information": draft}
+
+        save_draft(
+            USER_ID, project["id"], question["id"], "draft", draft.get("essay") or "",
+            draft.get("used_materials") or [], title=draft.get("title") or "",
         )
 
+        st.write("2/4 채용담당자 관점에서 감점요인을 찾습니다.")
+        recruiter = generate_json(recruiter_review_prompt(
+            draft.get("essay") or "", question, qa, alloc, company_data, job_data,
+            question.get("user_message") or "", instructions,
+        ))
 
-def render_analysis_summary(title: str, data: dict, fields: list[tuple[str, str]]):
-    st.markdown(f"#### {title}")
-    if not data:
-        st.info("아직 분석 결과가 없습니다.")
-        return
-    for label, key in fields:
-        value = data.get(key)
-        if not value:
-            continue
-        with st.expander(label, expanded=label in {"핵심 요약", "핵심 업무", "채용 핵심"}):
-            if isinstance(value, str):
-                st.write(value)
-            else:
-                pretty(value)
+        st.write("3/4 숫자·기간·역할·성과를 원 데이터와 대조합니다.")
+        fact = generate_json(fact_check_prompt(
+            draft.get("essay") or "", question, exp, profile.get("structured") or {},
+            company_data, job_data, prior,
+        ))
 
+        st.write("4/4 사실은 유지하고 문장과 흐름만 최종 편집합니다.")
+        final = generate_json(final_edit_prompt(
+            draft.get("essay") or "", question, qa, recruiter, fact,
+            question.get("user_message") or "", profile.get("style_sample") or "", instructions,
+        ))
 
-def gate_badge(status: str):
-    status = (status or "gap").lower()
-    cls = {"pass": "gate-pass", "partial": "gate-partial", "gap": "gate-gap"}.get(status, "gate-gap")
-    label = {"pass": "PASS · 문항 필수조건 충족", "partial": "PARTIAL · 보완하면 작성 가능", "gap": "GAP · 추가 사실 필요"}.get(status, status)
-    st.markdown(f'<div class="{cls}">{label}</div>', unsafe_allow_html=True)
+        review_bundle = {"recruiter": recruiter, "fact": fact, "final": final}
+        saved = save_draft(
+            USER_ID, project["id"], question["id"], "final",
+            final.get("final_essay") or draft.get("essay") or "",
+            draft.get("used_materials") or [], review=review_bundle,
+            title=final.get("title") or draft.get("title") or "",
+        )
+        status.update(label="자소서 최종본이 완성됐습니다.", state="complete", expanded=False)
+        return {"saved": saved, "draft": draft, "review": review_bundle}
 
 
 # =========================================================
@@ -237,23 +344,21 @@ def gate_badge(status: str):
 for key, default in {
     "user": None,
     "project_id": None,
+    "workspace_step": 1,
+    "analysis_ai_failed": False,
     "candidate_preview": None,
     "experience_preview": None,
-    "recruit_search_results": [],
-    "generated_drafts": {},
-    "generated_reviews": {},
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
-
 
 # =========================================================
 # Login
 # =========================================================
 if not st.session_state.user:
     st.markdown(
-        f'<div class="hero"><div class="hero-title">📝 {APP_TITLE}</div>'
-        f'<div class="hero-sub">{APP_SUBTITLE} · {VERSION}</div></div>',
+        f'<div class="app-head"><div class="app-title">📝 {APP_TITLE}</div>'
+        f'<div class="app-sub">{APP_SUBTITLE} · {VERSION}</div></div>',
         unsafe_allow_html=True,
     )
     left, right = st.columns(2, gap="large")
@@ -273,7 +378,7 @@ if not st.session_state.user:
                     st.error(f"로그인 오류: {e}")
     with right:
         st.subheader("처음 사용")
-        st.caption("계정을 만들면 이력·경험·기업분석·자소서가 사용자별로 분리 저장됩니다.")
+        st.caption("한 번 만든 이력·경험 DB는 여러 지원서에서 다시 사용할 수 있습니다.")
         with st.form("register"):
             new_id = st.text_input("새 아이디")
             display_name = st.text_input("표시 이름")
@@ -281,793 +386,578 @@ if not st.session_state.user:
             if st.form_submit_button("개인 저장소 만들기", use_container_width=True):
                 try:
                     u = register_user(new_id, new_pw, display_name)
-                    st.session_state.user = {
-                        "id": u["id"],
-                        "username": u["username"],
-                        "display_name": u.get("display_name") or u["username"],
-                    }
+                    st.session_state.user = {"id": u["id"], "username": u["username"], "display_name": u.get("display_name") or u["username"]}
                     rerun()
                 except Exception as e:
                     st.error(str(e))
     st.stop()
 
-
 USER = st.session_state.user
 USER_ID = USER["id"]
 
-
 # =========================================================
-# Sidebar: project + always-on prompt instruction
+# Sidebar: only application selection + simple controls
 # =========================================================
 with st.sidebar:
-    st.markdown(f"### 👤 {USER.get('display_name') or USER.get('username')}")
-    st.caption("개인 저장소")
+    st.markdown(f"### {USER.get('display_name') or USER.get('username')}")
+    st.caption("Career Essay AI")
     if st.button("로그아웃", use_container_width=True):
         st.session_state.user = None
         st.session_state.project_id = None
         rerun()
 
     st.divider()
-    st.markdown("### 지원 프로젝트")
+    st.markdown("#### 지원서")
     projects = list_projects(USER_ID)
     if projects:
         options = {
-            f"{p['company']} · {p['position']}" + (f" · {p.get('team')}" if p.get("team") else ""): p["id"]
+            f"{p['company']} · {p['position']}": p["id"]
             for p in projects
         }
         labels = list(options.keys())
         if st.session_state.project_id not in options.values():
             st.session_state.project_id = options[labels[0]]
         current_label = next(k for k, v in options.items() if v == st.session_state.project_id)
-        selected = st.selectbox("프로젝트 선택", labels, index=labels.index(current_label), label_visibility="collapsed")
-        st.session_state.project_id = options[selected]
+        selected = st.selectbox("현재 지원서", labels, index=labels.index(current_label), label_visibility="collapsed")
+        new_pid = options[selected]
+        if new_pid != st.session_state.project_id:
+            st.session_state.project_id = new_pid
+            st.session_state.workspace_step = 2 if analysis_ready(new_pid) else 1
+            rerun()
     else:
-        st.info("첫 지원 프로젝트를 만들어주세요.")
+        st.info("첫 지원서를 만들어주세요.")
 
-    with st.expander("➕ 새 지원 프로젝트", expanded=not bool(projects)):
+    with st.expander("＋ 새 지원서 만들기", expanded=not bool(projects)):
         with st.form("new_project", clear_on_submit=True):
             company = st.text_input("기업명")
             position = st.text_input("지원 직무")
-            team = st.text_input("사업부/팀/지원 조직", placeholder="모르면 비워도 됩니다")
-            deadline = st.date_input("지원 마감일", value=None)
-            if st.form_submit_button("프로젝트 만들기", type="primary", use_container_width=True):
+            team = st.text_input("지원 조직/팀", placeholder="모르면 비워도 됩니다")
+            if st.form_submit_button("만들기", type="primary", use_container_width=True):
                 if not company.strip() or not position.strip():
                     st.error("기업명과 지원 직무를 입력해주세요.")
                 else:
-                    p = create_project(USER_ID, company, position, team, deadline.isoformat() if deadline else "")
+                    p = create_project(USER_ID, company, position, team, "")
                     st.session_state.project_id = p["id"]
+                    st.session_state.workspace_step = 1
                     rerun()
 
     if st.session_state.project_id:
-        st.divider()
-        st.markdown("### 💬 AI에게 계속 지시하기")
-        st.caption("어느 화면에 있든 저장한 지시는 해당 단계 프롬프트에 누적 반영됩니다.")
-        scope_label = st.selectbox(
-            "적용 범위",
-            ["전체 프로젝트", "기업분석", "채용직무분석", "자소서"],
-            key="sidebar_instruction_scope",
-        )
-        scope_map = {"전체 프로젝트": "global", "기업분석": "company", "채용직무분석": "job", "자소서": "essay"}
-        instruction = st.text_area(
-            "추가 지시",
-            height=92,
-            placeholder="예: 최근 1년 이슈 중심으로 봐줘 / 문장을 담백하게 써줘",
-            key="sidebar_instruction_text",
-        )
-        if st.button("지시 저장", use_container_width=True):
-            try:
-                add_instruction(USER_ID, st.session_state.project_id, scope_map[scope_label], instruction)
-                st.success("지시를 저장했습니다.")
-                rerun()
-            except Exception as e:
-                st.error(str(e))
+        project = get_project(USER_ID, st.session_state.project_id)
+        with st.expander("지원 정보 수정"):
+            with st.form("edit_project"):
+                company_e = st.text_input("기업명", value=project.get("company") or "")
+                position_e = st.text_input("지원 직무", value=project.get("position") or "")
+                team_e = st.text_input("지원 조직/팀", value=project.get("team") or "")
+                if st.form_submit_button("저장", use_container_width=True):
+                    update_project(USER_ID, project["id"], company=company_e, position=position_e, team=team_e)
+                    rerun()
 
+        with st.expander("💬 AI에게 추가 지시"):
+            st.caption("예: 최근 1년 자료 중심 / AI 프로그램 경험을 강조 / 문장을 담백하게")
+            extra = st.text_area("지시사항", height=90, label_visibility="collapsed")
+            if st.button("지시 저장", use_container_width=True):
+                try:
+                    add_instruction(USER_ID, project["id"], "global", extra)
+                    st.success("저장했습니다.")
+                    rerun()
+                except Exception as e:
+                    st.error(str(e))
 
 # =========================================================
-# Header + nav
+# Header + simple top-level navigation
 # =========================================================
 st.markdown(
-    f'<div class="hero"><div class="hero-title">📝 {APP_TITLE}</div>'
-    f'<div class="hero-sub">{APP_SUBTITLE} · {VERSION}</div></div>',
+    f'<div class="app-head"><div class="app-title">📝 {APP_TITLE}</div>'
+    f'<div class="app-sub">{APP_SUBTITLE} · {VERSION}</div></div>',
     unsafe_allow_html=True,
 )
 
-if st.session_state.project_id:
-    current_project = require_project()
-    render_stage_cards(current_project)
-    st.write("")
-
-main_tab, profile_tab, evidence_tab, storage_tab, settings_tab = st.tabs([
-    "🎯 메인 워크플로우",
-    "👤 내 정보",
-    "🧾 분석 근거",
-    "📚 저장소",
-    "⚙️ 프로젝트 설정",
-])
-
+main_tab, profile_tab, archive_tab = st.tabs(["지원서", "내 경험", "보관함"])
 
 # =========================================================
-# MAIN WORKFLOW: 3 visible stages only
+# 1 workspace = 1 company/role application
 # =========================================================
 with main_tab:
     project = require_project()
-    analysis_bundle = get_analysis(USER_ID, project["id"])
-    company_data = analysis_bundle.get("company") or {}
-    job_data = analysis_bundle.get("job") or {}
-    sources = list_sources(USER_ID, project["id"])
+    bundle = get_analysis(USER_ID, project["id"]) or {}
+    app_analysis = bundle.get("application") or {}
 
-    company_stage, job_stage, essay_stage = st.tabs([
-        "1️⃣ 기업분석",
-        "2️⃣ 채용직무분석",
-        "3️⃣ 자소서 완성",
-    ])
+    st.markdown(
+        f'<div class="project-line"><div><div class="project-company">{html.escape(project["company"])}</div>'
+        f'<div class="project-role">{html.escape(project["position"])}{html.escape(" · " + project.get("team") if project.get("team") else "")}</div></div></div>',
+        unsafe_allow_html=True,
+    )
 
-    # ---------------- STEP 1 ----------------
-    with company_stage:
-        st.subheader(f"{project['company']} 기업분석")
-        st.caption("회사 소개를 길게 만드는 단계가 아닙니다. 자소서에서 실제로 써야 할 사업·변화·과제만 근거 중심으로 추립니다.")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("저장된 근거", f"{len(sources)}개")
-        c2.metric("공식 근거", f"{sum(1 for s in sources if s.get('trust_level') == 'official')}개")
-        c3.metric("분석 상태", "완료" if company_data else "진행 전")
+    if app_analysis and st.session_state.workspace_step == 1 and not st.session_state.get("manual_step_choice"):
+        st.session_state.workspace_step = 2
 
-        usage = get_monthly_research_usage(USER_ID)
-        st.info("기업명만으로 시작합니다. **최근 30일 안에 같은 기업을 검색한 기록이 있으면 Supabase 캐시를 재사용해 Tavily 크레딧을 쓰지 않습니다.** 캐시가 없거나 만료됐을 때만 Basic Search 1회를 호출합니다.")
-        uc1, uc2, uc3 = st.columns(3)
-        uc1.metric("이번 달 Tavily 실검색", f"{usage.get('searches', 0)}회")
-        uc2.metric("예상 사용 크레딧", f"{usage.get('credits', 0)}")
-        uc3.metric("캐시 재사용", f"{usage.get('cache_hits', 0)}회")
-        force_company = st.checkbox("기업자료 강제 새로검색 (크레딧 사용)", value=False, key="force_company_refresh")
-        if st.button("기업자료 확인 + 기업분석 실행 / 다시 분석", type="primary", use_container_width=True):
+    # two-step visual + click targets
+    c1, c2 = st.columns(2, gap="small")
+    with c1:
+        if st.button("① 지원기업 분석" + ("  ✓" if app_analysis else ""), use_container_width=True,
+                     type="primary" if st.session_state.workspace_step == 1 else "secondary"):
+            st.session_state.workspace_step = 1
+            st.session_state.manual_step_choice = True
+            rerun()
+    with c2:
+        if st.button("② 자소서 작성", use_container_width=True,
+                     type="primary" if st.session_state.workspace_step == 2 else "secondary",
+                     disabled=not bool(app_analysis)):
+            st.session_state.workspace_step = 2
+            st.session_state.manual_step_choice = True
+            rerun()
+
+    # -----------------------------------------------------
+    # STEP 1: integrated company + role + recruiting analysis
+    # -----------------------------------------------------
+    if st.session_state.workspace_step == 1:
+        st.markdown("## 지원기업 분석")
+        st.caption("기업분석·기업 내 직무분석·실제 채용분석을 따로 보지 않고, **이 지원서에 필요한 하나의 분석**으로 묶습니다.")
+
+        with st.expander("채용공고를 직접 가지고 있다면 추가하기 (선택)", expanded=False):
+            posting_text = st.text_area("채용공고 내용", height=160, placeholder="공고 원문을 붙여넣으면 자동 웹검색 결과와 함께 분석합니다.")
+            posting_url = st.text_input("채용공고 URL (선택)")
+            if st.button("채용공고 저장", use_container_width=True):
+                if posting_text.strip() or posting_url.strip():
+                    content = posting_text.strip()
+                    if posting_url.strip() and not content:
+                        try:
+                            content = fetch_url_text(posting_url.strip())
+                        except Exception as e:
+                            st.warning(f"URL 본문을 읽지 못했습니다. 공고 내용을 직접 붙여넣어주세요. ({e})")
+                    if content:
+                        add_source(USER_ID, project["id"], "사용자 입력 채용공고", "채용공고 원문", content, posting_url, "supported")
+                        st.success("채용공고를 저장했습니다.")
+                        rerun()
+
+        sources = list_sources(USER_ID, project["id"])
+        has_sources = bool(sources)
+        button_label = "지원기업 분석 시작" if not app_analysis else "최신 자료 확인 후 다시 분석"
+        force_refresh = st.checkbox("웹 자료를 강제로 새로 검색", value=False, help="평소에는 체크하지 않아도 됩니다. 저장된 캐시를 우선 재사용합니다.")
+
+        if st.button(button_label, type="primary", use_container_width=True):
             try:
-                ins = instruction_context(USER_ID, project["id"], "company")
-                with st.spinner("저장된 검색자료를 먼저 확인하고, 필요할 때만 웹 검색합니다..."):
-                    web_research = research_company_sources(project["company"], ins, user_id=USER_ID, project_id=project["id"], force_refresh=force_company)
-                    saved_count = save_auto_research_results(USER_ID, project["id"], web_research.get("results") or [])
+                if not recruiting_search_available() and not has_sources:
+                    raise RuntimeError("TAVILY_API_KEY가 없고 저장된 자료도 없습니다. Streamlit Secrets에 Tavily 키를 등록해주세요.")
+
+                with st.status("지원기업 자료를 확인하고 있습니다...", expanded=True) as status:
+                    if recruiting_search_available():
+                        st.write("기업·최근 이슈 자료를 확인합니다.")
+                        company_research = research_company_sources(
+                            project["company"], user_id=USER_ID, project_id=project["id"], force_refresh=force_refresh
+                        )
+                        save_auto_research_results(USER_ID, project["id"], company_research.get("results") or [])
+
+                        st.write("채용공고·직무·지원조직 자료를 확인합니다.")
+                        job_research = research_job_sources(
+                            project["company"], project["position"], project.get("team") or "",
+                            user_id=USER_ID, project_id=project["id"], force_refresh=force_refresh,
+                        )
+                        save_auto_research_results(USER_ID, project["id"], job_research.get("results") or [])
+
                     sources = list_sources(USER_ID, project["id"])
-                if not sources:
-                    raise RuntimeError("웹 검색에서 분석에 사용할 근거를 확보하지 못했습니다. 회사명이 정확한지 확인해주세요.")
-                with st.spinner("수집한 근거를 바탕으로 자소서용 기업분석을 만들고 있습니다..."):
-                    result = generate_json(company_analysis_prompt(project["company"], sources, ins))
-                result["web_research_queries"] = web_research.get("queries") or []
-                result["auto_sources_added"] = saved_count
-                save_analysis_section(USER_ID, project["id"], "company", result)
-                cache_note = "캐시 재사용 · Tavily 0 credit" if web_research.get("cache_hit") else "새 웹검색 · 예상 1 credit"
-                st.success(f"기업분석을 저장했습니다. {cache_note} / 프로젝트에 새 근거 {saved_count}개 저장")
-                rerun()
+                    st.write("기업·직무·채용정보를 하나의 지원 맥락으로 분석합니다.")
+                    result = run_application_analysis(USER_ID, project, sources)
+                    status.update(label="지원기업 분석이 완료됐습니다.", state="complete", expanded=False)
+                    st.session_state.analysis_ai_failed = False
+                    st.session_state.workspace_step = 2
+                    st.session_state.manual_step_choice = False
+                    rerun()
             except Exception as e:
-                st.error(f"기업분석 실패: {e}")
+                st.session_state.analysis_ai_failed = True
+                render_ai_error(e)
 
-        render_analysis_summary(
-            "기업분석 결과",
-            company_data,
-            [
-                ("핵심 요약", "business_summary"),
-                ("주요 사업", "key_businesses"),
-                ("최근 변화", "recent_changes"),
-                ("현재 과제", "current_challenges"),
-                ("자소서 활용 포인트", "essay_specific_points"),
-                ("과장하면 안 되는 부분", "do_not_overclaim"),
-                ("추가로 필요한 자료", "data_gaps"),
-            ],
-        )
+        # Gemini 503/429 after research: retry analysis only, no Tavily call
+        if st.session_state.analysis_ai_failed and list_sources(USER_ID, project["id"]):
+            if st.button("AI 분석만 다시 시도 (웹검색 없음)", use_container_width=True):
+                try:
+                    with st.spinner("저장된 근거로 AI 분석만 다시 시도하고 있습니다..."):
+                        run_application_analysis(USER_ID, project, list_sources(USER_ID, project["id"]))
+                    st.session_state.analysis_ai_failed = False
+                    st.session_state.workspace_step = 2
+                    st.session_state.manual_step_choice = False
+                    rerun()
+                except Exception as e:
+                    render_ai_error(e)
 
-    # ---------------- STEP 2 ----------------
-    with job_stage:
-        st.subheader(f"{project['position']} 채용직무분석")
-        st.caption("채용공고를 단어만 추출하지 않고 실제 업무·행동역량·지원조직·숨은 채용의도로 해석합니다.")
-        if not company_data:
-            st.warning("1단계 기업분석을 먼저 완료하는 것을 권장합니다. 직무분석 자체는 자동 웹 검색으로 실행할 수 있습니다.")
-        st.info("채용·직무 검색은 **7일 캐시**를 사용합니다. 같은 기업·직무·지원팀을 다시 분석하면 저장자료를 먼저 재사용하고, 만료되었을 때만 Tavily를 다시 호출합니다.")
-        force_job = st.checkbox("채용·직무자료 강제 새로검색 (크레딧 사용)", value=False, key="force_job_refresh")
+        if app_analysis:
+            st.divider()
+            st.markdown("### 분석 요약")
+            company_data = app_analysis.get("company") or {}
+            job_data = app_analysis.get("job") or {}
+            recruiting = app_analysis.get("recruiting") or {}
+            summary = app_analysis.get("application_summary") or {}
 
-        if st.button("채용자료 확인 + 채용직무분석 실행 / 다시 분석", type="primary", use_container_width=True):
-            try:
-                ins = instruction_context(USER_ID, project["id"], "job")
-                with st.spinner("저장된 채용자료를 먼저 확인하고, 필요할 때만 웹 검색합니다..."):
-                    web_research = research_job_sources(
-                        project["company"], project["position"], project.get("team") or "", ins,
-                        user_id=USER_ID, project_id=project["id"], force_refresh=force_job
-                    )
-                    saved_count = save_auto_research_results(USER_ID, project["id"], web_research.get("results") or [])
-                    sources = list_sources(USER_ID, project["id"])
-                if not sources:
-                    raise RuntimeError("웹 검색에서 채용·직무 근거를 확보하지 못했습니다. 기업명/직무명을 확인해주세요.")
-                with st.spinner("수집한 채용 근거에서 실제 업무·필수조건·지원조직·채용의도를 분석하고 있습니다..."):
-                    result = generate_json(job_analysis_prompt(
-                        project["company"], project["position"], project.get("team") or "", sources, company_data, ins
-                    ))
-                result["web_research_queries"] = web_research.get("queries") or []
-                result["auto_sources_added"] = saved_count
-                save_analysis_section(USER_ID, project["id"], "job", result)
-                cache_note = "캐시 재사용 · Tavily 0 credit" if web_research.get("cache_hit") else "새 웹검색 · 예상 1 credit"
-                st.success(f"채용직무분석을 저장했습니다. {cache_note} / 프로젝트에 새 근거 {saved_count}개 저장")
+            cols = st.columns(3, gap="medium")
+            with cols[0]:
+                with st.container(border=True):
+                    st.caption("COMPANY")
+                    st.markdown("**기업 핵심**")
+                    st.write(company_data.get("business_summary") or summary.get("one_line") or "-")
+                    _bullets(company_data.get("recent_changes"), 3)
+            with cols[1]:
+                with st.container(border=True):
+                    st.caption("ROLE")
+                    st.markdown("**직무 핵심**")
+                    st.write(job_data.get("posting_summary") or "-")
+                    _bullets(job_data.get("core_tasks"), 3)
+            with cols[2]:
+                with st.container(border=True):
+                    st.caption("HIRING")
+                    st.markdown("**채용 핵심**")
+                    _bullets(recruiting.get("must_show_in_essay") or summary.get("top_essay_messages"), 4)
+
+            with st.expander("분석 근거와 주의사항 자세히 보기"):
+                st.markdown("**자소서에 활용할 기업 사실**")
+                _bullets(summary.get("top_company_facts") or company_data.get("essay_specific_points"), 8)
+                st.markdown("**핵심 직무 요구**")
+                _bullets(summary.get("top_job_requirements") or job_data.get("behavior_competencies"), 8)
+                st.markdown("**과장하면 안 되는 부분**")
+                _bullets((company_data.get("what_not_to_use") or []) + (job_data.get("what_not_to_claim") or []), 8)
+
+            if st.button("이 분석으로 자소서 작성하기 →", type="primary", use_container_width=True):
+                st.session_state.workspace_step = 2
+                st.session_state.manual_step_choice = True
                 rerun()
-            except Exception as e:
-                st.error(f"채용직무분석 실패: {e}")
 
-        render_analysis_summary(
-            "채용직무분석 결과",
-            job_data,
-            [
-                ("채용 핵심", "posting_summary"),
-                ("핵심 업무", "core_tasks"),
-                ("필수·우대조건", "required_qualifications"),
-                ("행동역량", "behavior_competencies"),
-                ("숨은 채용의도", "hidden_hiring_intents"),
-                ("지원조직/팀", "team"),
-                ("역량 가중치", "competency_weights"),
-                ("기업 변화 → 직무 영향", "company_to_job_link"),
-                ("지원자에게 필요한 증거", "candidate_evidence_needed"),
-                ("추가로 필요한 자료", "data_gaps"),
-            ],
-        )
+    # -----------------------------------------------------
+    # STEP 2: essay workspace
+    # -----------------------------------------------------
+    else:
+        if not app_analysis:
+            st.warning("먼저 지원기업 분석을 완료해주세요.")
+            if st.button("지원기업 분석으로 이동", use_container_width=True):
+                set_workspace_step(1)
+                rerun()
+            st.stop()
 
-    # ---------------- STEP 3 ----------------
-    with essay_stage:
-        st.subheader("자소서 완성")
-        st.caption("문항을 먼저 냉정하게 분석하고, 사용자가 하고 싶은 말을 중심에 둔 뒤 경험을 배정합니다. 글부터 쓰지 않습니다.")
+        st.markdown("## 자소서 작성")
+        st.caption("문항 전체를 먼저 분석하고 소재를 배분한 뒤, 문항별로 **내가 하고 싶은 말 + 실제 경험 + 기업·직무 근거**를 연결합니다.")
+
+        summary = app_analysis.get("application_summary") or {}
+        if summary.get("top_essay_messages"):
+            with st.expander("이번 지원서에서 기억할 핵심", expanded=False):
+                _bullets(summary.get("top_essay_messages"), 5)
 
         questions = list_questions(USER_ID, project["id"])
-        experiences = list_experiences(USER_ID)
         profile = get_candidate_profile(USER_ID)
+        experiences = list_experiences(USER_ID)
         allocation = get_allocation(USER_ID, project["id"])
 
-        sub1, sub2, sub3, sub4 = st.tabs([
-            "① 문항 입력·분석",
-            "② 소재 배분",
-            "③ 작성",
-            "④ 검토·최종",
-        ])
+        with st.expander("＋ 자소서 문항 추가", expanded=not bool(questions)):
+            with st.form("add_question", clear_on_submit=True):
+                qtext = st.text_area("자소서 문항", height=100)
+                qcol1, qcol2 = st.columns([0.28, 0.72])
+                char_limit = qcol1.number_input("글자수", min_value=0, max_value=5000, value=0, step=50)
+                user_message = qcol2.text_area("내가 하고 싶은 말 (선택)", height=90, placeholder="예: 데이터분석을 배우고 AI 업무지원 프로그램을 직접 만든 경험을 꼭 살리고 싶다.")
+                if st.form_submit_button("문항 추가", type="primary", use_container_width=True):
+                    if not qtext.strip():
+                        st.error("문항을 입력해주세요.")
+                    else:
+                        add_question(USER_ID, project["id"], qtext, int(char_limit), user_message, "")
+                        rerun()
 
-        # 3-1 question input and analysis
-        with sub1:
-            left, right = st.columns([0.9, 1.1], gap="large")
-            with left:
-                st.markdown("#### 기업 자소서 문항 추가")
-                st.caption("'내가 하고 싶은 말'은 선택 소재가 아니라, 이번 문항에서 반드시 전달하고 싶은 사용자 의도입니다.")
-                with st.form("add_question_form", clear_on_submit=True):
-                    q_text = st.text_area("자소서 문항", height=130, placeholder="기업의 실제 문항을 그대로 붙여넣으세요.")
-                    q_limit = st.number_input("글자수 제한", min_value=0, max_value=5000, step=50, value=0)
-                    q_message = st.text_area(
-                        "내가 하고 싶은 말 (선택)",
-                        height=115,
-                        placeholder="예: 현재 데이터분석을 배우고 있고 AI 업무지원 프로그램을 직접 만들고 있다는 점을 꼭 보여주고 싶다.",
-                    )
-                    q_instruction = st.text_area(
-                        "이 문항에만 적용할 추가 지시 (선택)",
-                        height=80,
-                        placeholder="예: 대학원 이야기는 쓰지 말아줘 / 현장 경험을 앞에 배치해줘",
-                    )
-                    if st.form_submit_button("문항 저장", type="primary", use_container_width=True):
-                        if not q_text.strip():
-                            st.error("자소서 문항을 입력해주세요.")
-                        else:
-                            add_question(USER_ID, project["id"], q_text, q_limit, q_message, q_instruction)
-                            st.success("문항을 저장했습니다.")
-                            rerun()
+        if not questions:
+            st.info("자소서 문항을 모두 추가해주세요. 문항 전체를 함께 본 뒤 중복되지 않게 소재를 배분합니다.")
+            st.stop()
 
-            with right:
-                st.markdown(f"#### 저장된 문항 {len(questions)}개")
-                if not questions:
-                    st.info("기업의 자소서 문항을 추가하면 여기서 바로 분석할 수 있습니다.")
-                for idx, q in enumerate(questions, start=1):
-                    with st.expander(f"{idx}. {q['question_text'][:70]}", expanded=not bool(q.get("analysis"))):
-                        st.write(q["question_text"])
-                        if q.get("char_limit"):
-                            st.caption(f"글자수 제한: {q['char_limit']}자")
-                        if q.get("user_message"):
-                            st.markdown("**내가 하고 싶은 말**")
-                            st.info(q["user_message"])
-                        if q.get("custom_instruction"):
-                            st.caption(f"이 문항 추가 지시: {q['custom_instruction']}")
+        # compact question list
+        st.markdown("### 문항")
+        for idx, q in enumerate(questions, start=1):
+            final = latest_final(USER_ID, project["id"], q["id"])
+            state = "최종본 완료" if final else ("분석 완료" if q.get("analysis") else "분석 전")
+            st.markdown(
+                f'<div class="question-card"><div class="q-num">Q{idx}</div><div class="q-text">{html.escape(q["question_text"])}</div>'
+                f'<div class="q-meta">{q.get("char_limit") or "제한 없음"}{"자" if q.get("char_limit") else ""} · {state}</div></div>',
+                unsafe_allow_html=True,
+            )
 
-                        c_analyze, c_delete = st.columns([0.8, 0.2])
-                        if c_analyze.button("문항 냉정 분석", key=f"qa_{q['id']}", use_container_width=True):
-                            try:
-                                ins = instruction_context(USER_ID, project["id"], "essay", q["id"])
-                                if q.get("custom_instruction"):
-                                    ins = [*ins, {"scope": "question", "instruction": q["custom_instruction"]}]
-                                with st.spinner("채용담당자가 무엇을 보려는 문항인지 분해하고 있습니다..."):
-                                    qa = generate_json(question_analysis_prompt(q, company_data, job_data, q.get("user_message") or "", ins))
-                                update_question(USER_ID, project["id"], q["id"], analysis=qa)
-                                st.success("문항 분석을 저장했습니다.")
-                                rerun()
-                            except Exception as e:
-                                st.error(f"문항 분석 실패: {e}")
-                        if c_delete.button("삭제", key=f"qd_{q['id']}", use_container_width=True):
-                            delete_question(USER_ID, project["id"], q["id"])
-                            rerun()
+        with st.expander("문항 수정/삭제", expanded=False):
+            edit_labels = {f"Q{i+1}. {q['question_text'][:50]}": q for i, q in enumerate(questions)}
+            edit_label = st.selectbox("수정할 문항", list(edit_labels.keys()), key="edit_question_select")
+            eq = edit_labels[edit_label]
+            e_text = st.text_area("문항", value=eq.get("question_text") or "", height=90, key=f"eqt_{eq['id']}")
+            e_limit = st.number_input("글자수", min_value=0, max_value=5000, value=int(eq.get("char_limit") or 0), step=50, key=f"eql_{eq['id']}")
+            e_msg = st.text_area("내가 하고 싶은 말", value=eq.get("user_message") or "", height=90, key=f"eqm_{eq['id']}")
+            ec1, ec2 = st.columns(2)
+            if ec1.button("수정 저장", use_container_width=True):
+                update_question(USER_ID, project["id"], eq["id"], question_text=e_text, char_limit=int(e_limit), user_message=e_msg, analysis={})
+                save_allocation(USER_ID, project["id"], {})
+                rerun()
+            if ec2.button("문항 삭제", use_container_width=True):
+                delete_question(USER_ID, project["id"], eq["id"])
+                save_allocation(USER_ID, project["id"], {})
+                rerun()
 
-                        if q.get("analysis"):
-                            qa = q["analysis"]
-                            st.markdown("**한 줄 의도**")
-                            st.write(qa.get("one_line_intent") or "-")
-                            a, b = st.columns(2)
-                            with a:
-                                st.markdown("**반드시 답해야 할 것**")
-                                for item in qa.get("must_answer_elements", []):
-                                    st.write("-", item)
-                                st.markdown("**하드 조건**")
-                                for item in qa.get("hard_requirements", []):
-                                    st.write("-", item)
-                            with b:
-                                st.markdown("**감점 위험**")
-                                for item in qa.get("deduction_risks", []):
-                                    st.write("-", item)
-                                if qa.get("lookalike_but_wrong"):
-                                    st.markdown("**비슷해 보여도 부적합한 경험**")
-                                    for item in qa.get("lookalike_but_wrong", []):
-                                        st.write("-", item)
-                            if qa.get("user_message_core"):
-                                st.markdown("**내가 하고 싶은 말 반영 전략**")
-                                st.write(qa.get("user_message_integration") or qa.get("user_message_core"))
-                                for ask in qa.get("user_message_evidence_questions", []):
-                                    st.warning(ask)
-
-        # 3-2 allocation
-        with sub2:
-            st.markdown("#### 전체 문항 소재 선배분")
-            st.caption("문항마다 따로 쓰지 않습니다. 전체 문항을 함께 보고 Requirement Gate를 통과한 경험만 배정하며 의미상 중복을 사전에 막습니다.")
-            analyzed_questions = [q for q in questions if q.get("analysis")]
-            ready = bool(questions) and len(analyzed_questions) == len(questions) and bool(experiences)
+        all_analyzed = all(bool(q.get("analysis")) for q in questions)
+        if st.button("전체 문항 분석 + 소재 배분" if not allocation else "문항 분석·소재 배분 다시 하기",
+                     type="primary", use_container_width=True):
             if not experiences:
-                st.info("내 정보 탭에서 경험 DB를 먼저 추가해주세요.")
-            if questions and len(analyzed_questions) != len(questions):
-                st.warning("모든 문항을 먼저 '문항 냉정 분석'해야 소재 배분을 실행할 수 있습니다.")
-            if st.button("전체 문항 소재 자동 배분", type="primary", use_container_width=True, disabled=not ready):
+                st.error("먼저 '내 경험'에서 이력서 또는 경험을 등록해주세요.")
+            else:
                 try:
-                    ins = instruction_context(USER_ID, project["id"], "essay")
-                    payload_qs = [
-                        {
-                            "id": q["id"],
-                            "question_text": q["question_text"],
-                            "char_limit": q.get("char_limit") or 0,
-                            "user_message": q.get("user_message") or "",
-                            "analysis": q.get("analysis") or {},
-                        }
-                        for q in questions
-                    ]
-                    payload_exp = [exp_view(e) for e in experiences]
-                    with st.spinner("필수조건 Gate → 경험 매칭 → 전체 문항 중복 차단 순서로 배분하고 있습니다..."):
-                        alloc = generate_json(allocation_prompt(payload_qs, payload_exp, company_data, job_data, ins))
-                    save_allocation(USER_ID, project["id"], alloc)
-                    st.success("소재 배분을 저장했습니다.")
+                    company_data = app_analysis.get("company") or {}
+                    job_data = app_analysis.get("job") or {}
+                    with st.status("문항을 냉정하게 분석하고 소재를 배분하고 있습니다...", expanded=True) as status:
+                        for idx, q in enumerate(questions, start=1):
+                            st.write(f"Q{idx} 문항 의도와 필수조건 분석")
+                            ins = instruction_context(USER_ID, project["id"], "essay", q["id"])
+                            qa = generate_json(question_analysis_prompt(
+                                q, company_data, job_data, q.get("user_message") or "", ins
+                            ))
+                            update_question(USER_ID, project["id"], q["id"], analysis=qa)
+                        refreshed = list_questions(USER_ID, project["id"])
+                        st.write("전체 문항을 함께 보고 경험·전공·자격·배경의 중복을 사전에 차단")
+                        alloc = generate_json(allocation_prompt(
+                            refreshed,
+                            [exp_view(x) for x in experiences],
+                            company_data, job_data,
+                            instruction_context(USER_ID, project["id"], "essay"),
+                        ))
+                        save_allocation(USER_ID, project["id"], alloc)
+                        status.update(label="문항 분석과 소재 배분이 완료됐습니다.", state="complete", expanded=False)
                     rerun()
                 except Exception as e:
-                    st.error(f"소재 배분 실패: {e}")
+                    render_ai_error(e)
 
-            allocation = get_allocation(USER_ID, project["id"])
-            if allocation:
-                for q in questions:
-                    item = get_alloc_for_question(allocation, q["id"])
-                    if not item:
-                        continue
-                    with st.expander(q["question_text"][:80], expanded=True):
-                        gate = item.get("requirement_gate") or {}
-                        gate_badge(gate.get("status") or "gap")
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.markdown("**선택 경험**")
-                            selected_exp = find_exp(experiences, item.get("primary_experience_id"))
-                            st.write(selected_exp.get("title") or "선택 경험 없음")
-                            st.caption(item.get("reason") or "")
-                            if item.get("user_message_anchor"):
-                                st.markdown("**내가 하고 싶은 말의 중심축**")
-                                st.info(item["user_message_anchor"])
-                        with c2:
-                            if gate.get("missing"):
-                                st.markdown("**부족한 필수요소**")
-                                for x in gate.get("missing", []):
-                                    st.write("-", x)
-                            if gate.get("gap_questions"):
-                                st.markdown("**추가로 확인할 사실**")
-                                for x in gate.get("gap_questions", []):
-                                    st.warning(x)
-                        if item.get("do_not_repeat"):
-                            st.markdown("**다른 문항에서 반복 금지**")
-                            st.write(" · ".join(map(str, item["do_not_repeat"])))
+        questions = list_questions(USER_ID, project["id"])
+        allocation = get_allocation(USER_ID, project["id"])
+        if not allocation:
+            st.info("위 버튼을 눌러 문항 분석과 소재 배분을 먼저 완료해주세요.")
+            st.stop()
 
-        # 3-3 writing
-        with sub3:
-            if not questions:
-                st.info("먼저 자소서 문항을 추가해주세요.")
-            elif not allocation:
-                st.info("먼저 전체 문항 소재 배분을 실행해주세요.")
-            else:
-                labels = {f"{i+1}. {q['question_text'][:65]}": q for i, q in enumerate(questions)}
-                selected_label = st.selectbox("작성할 문항", list(labels.keys()), key="write_q_select")
-                q = labels[selected_label]
-                qa = q.get("analysis") or {}
-                alloc = get_alloc_for_question(allocation, q["id"])
-                selected_exp = find_exp(experiences, alloc.get("primary_experience_id"))
-                gate = alloc.get("requirement_gate") or {}
+        st.divider()
+        qlabels = {f"Q{i+1}. {q['question_text'][:58]}": q for i, q in enumerate(questions)}
+        selected_label = st.selectbox("작성할 문항", list(qlabels.keys()), key="essay_question_select")
+        q = qlabels[selected_label]
+        qa = q.get("analysis") or {}
+        alloc = get_alloc_for_question(allocation, q["id"])
+        gate = alloc.get("requirement_gate") or {}
+        selected_exp = find_exp(experiences, alloc.get("primary_experience_id"))
 
-                top_left, top_right = st.columns([0.65, 0.35], gap="large")
-                with top_left:
-                    st.markdown("#### 이번 문항 작성 설계")
-                    gate_badge(gate.get("status") or "gap")
-                    st.write("**문항 의도:**", qa.get("one_line_intent") or "-")
-                    st.write("**배정 경험:**", selected_exp.get("title") or "없음")
-                    if q.get("user_message"):
-                        st.markdown("**내가 하고 싶은 말**")
-                        st.info(q["user_message"])
-                    if alloc.get("recommended_structure"):
-                        st.write("**권장 구조:**", " → ".join(map(str, alloc.get("recommended_structure") or [])))
-                with top_right:
-                    st.markdown("#### 작성 전 확인")
-                    for x in gate.get("gap_questions", []):
-                        st.warning(x)
-                    if alloc.get("do_not_repeat"):
-                        st.caption("반복 금지 소재")
-                        for x in alloc.get("do_not_repeat", []):
-                            st.write("-", x)
+        # editable user intent stays visible
+        current_msg = st.text_area(
+            "내가 하고 싶은 말",
+            value=q.get("user_message") or "",
+            height=92,
+            help="이 내용은 버리는 후보 소재가 아니라, 이번 문항에서 반드시 살려야 할 사용자 의도로 처리됩니다.",
+            key=f"user_message_live_{q['id']}",
+        )
+        if current_msg != (q.get("user_message") or ""):
+            if st.button("하고 싶은 말 저장", use_container_width=True, key=f"save_msg_{q['id']}"):
+                update_question(USER_ID, project["id"], q["id"], user_message=current_msg, analysis={})
+                save_allocation(USER_ID, project["id"], {})
+                st.success("저장했습니다. 문항 분석·소재 배분을 다시 실행해주세요.")
+                rerun()
 
-                can_write = (gate.get("status") or "gap") != "gap"
-                if not can_write:
-                    st.error("현재 경험 DB만으로는 문항의 필수조건을 충족하지 못합니다. 위 추가 질문에 해당하는 사실을 '내 정보' 또는 '내가 하고 싶은 말'에 보완한 뒤 다시 문항분석·소재배분을 실행해주세요.")
+        st.markdown("### AI가 잡은 작성 방향")
+        cards = st.columns(4, gap="small")
+        card_values = [
+            ("채용자가 보는 것", qa.get("one_line_intent") or qa.get("recruiter_is_testing") or "-"),
+            ("반드시 답할 것", " / ".join(_short_list(qa.get("must_answer_elements"), 3)) or "-"),
+            ("추천 경험", selected_exp.get("title") or "추가 경험 필요"),
+            ("확인 필요", " / ".join(_short_list(gate.get("missing"), 3)) or "없음"),
+        ]
+        for col, (label, value) in zip(cards, card_values):
+            col.markdown(
+                f'<div class="section-card"><div class="section-kicker">{html.escape(str(label))}</div><div class="section-body">{html.escape(str(value))}</div></div>',
+                unsafe_allow_html=True,
+            )
 
-                if st.button("소제목 포함 자소서 초안 생성", type="primary", use_container_width=True, disabled=not can_write):
-                    try:
-                        ins = instruction_context(USER_ID, project["id"], "essay", q["id"])
-                        if q.get("custom_instruction"):
-                            ins = [*ins, {"scope": "question", "instruction": q["custom_instruction"]}]
-                        prior = prior_used_materials(USER_ID, project["id"], q["id"])
-                        with st.spinner("문항 의도·사용자 메시지·경험·기업/직무 근거를 연결해 작성하고 있습니다..."):
-                            draft = generate_json(essay_writer_prompt(
-                                q, qa, alloc, selected_exp, company_data, job_data,
-                                profile.get("structured") or {}, prior,
-                                q.get("user_message") or "", profile.get("style_sample") or "", ins,
-                            ))
-                        st.session_state.generated_drafts[str(q["id"])] = draft
-                    except Exception as e:
-                        st.error(f"초안 생성 실패: {e}")
+        gate_status = (gate.get("status") or "gap").lower()
+        if gate_status == "pass":
+            st.markdown('<div class="good">문항의 핵심 조건을 충족하는 소재가 확인됐습니다.</div>', unsafe_allow_html=True)
+        elif gate_status == "partial":
+            st.markdown('<div class="warn">작성은 가능하지만 일부 사실을 보완하면 더 강해집니다.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="bad">현재 자료만으로는 문항의 핵심 조건을 충족하지 못합니다.</div>', unsafe_allow_html=True)
+            for item in gate.get("gap_questions", []) or []:
+                st.warning(item)
 
-                draft = st.session_state.generated_drafts.get(str(q["id"]))
-                if draft:
-                    if draft.get("status") == "needs_information":
-                        st.warning("추가 사실 확인이 필요합니다.")
-                        for x in draft.get("needs_confirmation", []):
-                            st.write("-", x)
-                    else:
-                        st.markdown(f"### [{draft.get('title') or '소제목'}]")
-                        edited = st.text_area("초안", value=draft.get("essay") or "", height=420, key=f"draft_edit_{q['id']}")
-                        c1, c2 = st.columns(2)
-                        c1.metric("현재 글자수", len(edited))
-                        c2.metric("제한", f"{q.get('char_limit')}자" if q.get("char_limit") else "없음")
-                        local = local_repetition_report(edited, [m for p in prior_used_materials(USER_ID, project["id"], q["id"]) for m in p.get("used_materials", [])])
-                        if local.get("ai_tone_hits") or local.get("reused_facts"):
-                            with st.expander("로컬 문체·중복 빠른 점검"):
-                                pretty(local)
-                        if st.button("초안 저장", use_container_width=True, key=f"save_draft_{q['id']}"):
-                            save_draft(
-                                USER_ID, project["id"], q["id"], "draft", edited,
-                                draft.get("used_materials") or [], title=draft.get("title") or "",
-                            )
-                            st.success("초안을 저장했습니다.")
-
-        # 3-4 review
-        with sub4:
-            if not questions:
-                st.info("자소서 문항이 없습니다.")
-            else:
-                labels = {f"{i+1}. {q['question_text'][:65]}": q for i, q in enumerate(questions)}
-                selected_label = st.selectbox("검토할 문항", list(labels.keys()), key="review_q_select")
-                q = labels[selected_label]
-                drafts = list_drafts(USER_ID, project["id"], q["id"])
-                if not drafts:
-                    st.info("먼저 해당 문항의 초안을 저장해주세요.")
+        if st.button("이 문항 자소서 완성하기", type="primary", use_container_width=True, disabled=gate_status == "gap"):
+            try:
+                result = generate_complete_essay(project, q, allocation, experiences, profile)
+                if result.get("needs_information"):
+                    draft = result["needs_information"]
+                    st.warning("추가 사실이 필요합니다.")
+                    for x in draft.get("needs_confirmation", []) or []:
+                        st.write("•", x)
                 else:
-                    draft_labels = {
-                        f"{d.get('draft_type')} · {(d.get('created_at') or '')[:16]} · {(d.get('title') or '소제목 없음')}": d
-                        for d in drafts
-                    }
-                    selected_d = st.selectbox("저장본", list(draft_labels.keys()))
-                    d = draft_labels[selected_d]
-                    source_essay = st.text_area("검토할 내용", value=d.get("content") or "", height=330)
-                    alloc = get_alloc_for_question(allocation, q["id"])
-                    selected_exp = find_exp(experiences, alloc.get("primary_experience_id"))
-                    qa = q.get("analysis") or {}
-                    if st.button("채용담당자 관점 종합 검토", type="primary", use_container_width=True):
-                        try:
-                            ins = instruction_context(USER_ID, project["id"], "essay", q["id"])
-                            prior = prior_used_materials(USER_ID, project["id"], q["id"])
-                            with st.spinner("문항 충족 → 사실 → 중복 → 기업/직무 적합성 → AI 말투 순으로 검토하고 있습니다..."):
-                                review = generate_json(review_prompt(
-                                    source_essay, q, qa, alloc, selected_exp, company_data, job_data,
-                                    profile.get("structured") or {}, prior, q.get("user_message") or "", ins,
-                                ))
-                            st.session_state.generated_reviews[str(q["id"])] = review
-                        except Exception as e:
-                            st.error(f"검토 실패: {e}")
+                    rerun()
+            except Exception as e:
+                render_ai_error(e)
 
-                    review = st.session_state.generated_reviews.get(str(q["id"]))
-                    if review:
-                        scores = review.get("scores") or {}
-                        if scores:
-                            st.markdown("#### 채용담당자 관점 점수")
-                            df = pd.DataFrame([{"항목": k, "점수": v} for k, v in scores.items()])
-                            st.dataframe(df, hide_index=True, use_container_width=True)
-                        issue_cols = st.columns(3)
-                        issue_map = [
-                            ("치명적 문제", "fatal_issues"),
-                            ("사실/문항 문제", "fact_issues"),
-                            ("중복·AI 말투", "repetition_issues"),
-                        ]
-                        for col, (label, key) in zip(issue_cols, issue_map):
-                            with col:
-                                st.markdown(f"**{label}**")
-                                vals = review.get(key) or []
-                                if not vals:
-                                    st.caption("특이사항 없음")
-                                for x in vals:
-                                    st.write("-", x)
-                        st.markdown("#### 최종 수정본")
-                        final_title = st.text_input("소제목", value=review.get("revised_title") or d.get("title") or "")
-                        final_essay = st.text_area("최종본", value=review.get("revised_essay") or source_essay, height=430)
-                        if st.button("최종본 저장", type="primary", use_container_width=True):
-                            save_draft(
-                                USER_ID, project["id"], q["id"], "final", final_essay,
-                                d.get("used_materials") or [], review=review, title=final_title,
-                            )
-                            st.success("최종본을 저장했습니다.")
+        final_row = latest_final(USER_ID, project["id"], q["id"])
+        if final_row:
+            st.divider()
+            st.markdown("### 최종본")
+            title = final_row.get("title") or "소제목"
+            st.markdown(f"#### [{title}]")
+            final_text = st.text_area("최종 자소서", value=final_row.get("content") or "", height=420, key=f"final_text_{q['id']}")
+            cc1, cc2 = st.columns(2)
+            cc1.metric("현재 글자수", len(final_text))
+            cc2.metric("글자수 제한", q.get("char_limit") or "없음")
 
+            lc = local_repetition_report(final_text, [m for p in prior_used_materials(USER_ID, project["id"], q["id"]) for m in p.get("used_materials", [])])
+            if lc.get("ai_tone_hits") or lc.get("reused_facts"):
+                with st.expander("빠른 중복·AI 말투 점검"):
+                    st.json(lc)
+
+            b1, b2 = st.columns(2)
+            if b1.button("직접 수정한 내용 저장", use_container_width=True):
+                save_draft(USER_ID, project["id"], q["id"], "final", final_text, final_row.get("used_materials") or [], title=title)
+                st.success("수정본을 저장했습니다.")
+            with b2:
+                with st.popover("AI에게 수정 지시"):
+                    rewrite = st.text_area("수정 방향", placeholder="예: 첫 문단을 더 담백하게 / 내 행동을 더 선명하게 / 이 문장은 빼줘", height=100, key=f"rewrite_{q['id']}")
+                    if st.button("지시 저장 후 다시 작성", use_container_width=True, key=f"rewrite_btn_{q['id']}"):
+                        update_question(USER_ID, project["id"], q["id"], custom_instruction=rewrite)
+                        st.success("지시를 저장했습니다. 창을 닫고 '이 문항 자소서 완성하기'를 다시 눌러주세요.")
+
+            with st.expander("AI 검토 결과 자세히 보기"):
+                st.json(final_row.get("review") or {})
 
 # =========================================================
-# PROFILE / EXPERIENCE TAB
+# Personal vault
 # =========================================================
 with profile_tab:
-    st.subheader("내 정보")
-    st.caption("메인 화면을 복잡하게 만들지 않기 위해 이력서·경험 DB·문체는 여기서 관리합니다. 모든 지원 프로젝트에서 재사용됩니다.")
-    ptab, etab = st.tabs(["이력서·프로필", "경험 DB"])
+    st.markdown("## 내 경험")
+    st.caption("이력서와 경험은 한 번 저장하면 모든 지원서에서 재사용됩니다.")
+    profile = get_candidate_profile(USER_ID)
 
-    with ptab:
-        profile = get_candidate_profile(USER_ID)
-        left, right = st.columns(2, gap="large")
-        with left:
-            uploaded = st.file_uploader("이력서/경력기술서", type=["pdf", "docx", "txt", "md"])
-            raw_resume = st.text_area("또는 원문 붙여넣기", value=(profile.get("raw_text") or "") if not uploaded else "", height=260)
-            style_sample = st.text_area(
-                "내 문체 샘플 (선택)", value=profile.get("style_sample") or "", height=120,
-                placeholder="내가 직접 쓴 자연스러운 문장을 넣으면 최종 말투에 참고합니다.",
-            )
-            if st.button("AI로 이력 구조화", type="primary", use_container_width=True):
+    p1, p2 = st.columns([1.15, 0.85], gap="large")
+    with p1:
+        st.markdown("### 이력서·프로필")
+        uploaded = st.file_uploader("이력서/경력기술서", type=["pdf", "docx", "txt", "md"])
+        if st.button("이력서 분석·저장", type="primary", use_container_width=True, disabled=uploaded is None):
+            try:
+                raw = extract_text(uploaded)
+                with st.spinner("이력과 경험을 구조화하고 있습니다..."):
+                    structured = generate_json(candidate_structure_prompt(raw, []))
+                save_candidate_profile(USER_ID, raw, structured, profile.get("style_sample") or "")
+                added = sync_profile_experiences(USER_ID, structured)
+                st.success(f"프로필을 저장했습니다. 경험 DB에 새 경험 {added}개를 반영했습니다.")
+                rerun()
+            except Exception as e:
+                render_ai_error(e)
+
+        if profile.get("structured"):
+            with st.expander("저장된 프로필 보기"):
+                st.json(profile.get("structured") or {})
+
+        st.markdown("### 내 문체")
+        style = st.text_area("내가 자연스럽다고 느끼는 문장 샘플", value=profile.get("style_sample") or "", height=120)
+        if st.button("문체 저장", use_container_width=True):
+            save_candidate_profile(USER_ID, profile.get("raw_text") or "", profile.get("structured") or {}, style)
+            st.success("문체 샘플을 저장했습니다.")
+
+    with p2:
+        st.markdown("### 경험 추가")
+        raw_exp = st.text_area("경험을 편하게 적어주세요", height=180, placeholder="상황, 문제, 내가 한 판단과 행동, 결과를 자유롭게 적으면 됩니다.")
+        if st.button("경험 분석·저장", type="primary", use_container_width=True):
+            if not raw_exp.strip():
+                st.error("경험을 입력해주세요.")
+            else:
                 try:
-                    text = extract_text(uploaded) if uploaded else raw_resume.strip()
-                    if not text:
-                        st.warning("파일을 올리거나 원문을 입력해주세요.")
-                    else:
-                        project_id = st.session_state.project_id
-                        ins = instruction_context(USER_ID, project_id, "profile") if project_id else []
-                        with st.spinner("이력과 경험을 사실 단위로 구조화하고 있습니다..."):
-                            data = generate_json(candidate_structure_prompt(text, ins))
-                        st.session_state.candidate_preview = {"raw": text, "data": data, "style_sample": style_sample}
+                    with st.spinner("경험에서 문제·판단·행동·결과를 구조화하고 있습니다..."):
+                        s = generate_json(experience_structure_prompt(raw_exp, []))
+                    add_experience(USER_ID, raw_exp, s)
+                    st.success("경험 DB에 저장했습니다.")
+                    rerun()
                 except Exception as e:
-                    st.error(f"구조화 실패: {e}")
-        with right:
-            st.markdown("#### 구조화 결과")
-            preview = st.session_state.candidate_preview
-            if preview:
-                pretty(preview["data"])
-                if st.button("개인 DB에 저장", use_container_width=True):
-                    save_candidate_profile(USER_ID, preview["raw"], preview["data"], preview.get("style_sample") or "")
-                    existing_titles = {e.get("title") for e in list_experiences(USER_ID)}
-                    for exp in preview["data"].get("experiences", []):
-                        if exp.get("title") and exp.get("title") not in existing_titles:
-                            add_experience(USER_ID, "이력서에서 자동 추출", exp)
-                    st.session_state.candidate_preview = None
-                    st.success("프로필과 경험을 저장했습니다.")
-                    rerun()
-            elif profile:
-                pretty(profile.get("structured") or {})
-            else:
-                st.info("저장된 프로필이 없습니다.")
+                    render_ai_error(e)
 
-    with etab:
-        left, right = st.columns([0.85, 1.15], gap="large")
-        with left:
-            raw_exp = st.text_area(
-                "경험을 편하게 적어주세요", height=250,
-                placeholder="정해진 양식 없이 기억나는 대로 적으세요. AI가 문제·판단·행동·결과로 구조화합니다.",
-            )
-            if st.button("경험 구조화", type="primary", use_container_width=True):
-                if not raw_exp.strip():
-                    st.warning("경험을 입력해주세요.")
-                else:
-                    try:
-                        project_id = st.session_state.project_id
-                        ins = instruction_context(USER_ID, project_id, "profile") if project_id else []
-                        with st.spinner("내 행동과 팀 행동을 분리하고 부족한 근거를 찾고 있습니다..."):
-                            data = generate_json(experience_structure_prompt(raw_exp, ins))
-                        st.session_state.experience_preview = {"raw": raw_exp, "data": data}
-                    except Exception as e:
-                        st.error(f"경험 구조화 실패: {e}")
-            if st.session_state.experience_preview:
-                pretty(st.session_state.experience_preview["data"])
-                if st.button("경험 DB에 저장", use_container_width=True):
-                    p = st.session_state.experience_preview
-                    add_experience(USER_ID, p["raw"], p["data"])
-                    st.session_state.experience_preview = None
-                    st.success("경험을 저장했습니다.")
-                    rerun()
-        with right:
-            experiences = list_experiences(USER_ID)
-            st.markdown(f"#### 저장된 경험 {len(experiences)}개")
-            if not experiences:
-                st.info("아직 저장된 경험이 없습니다.")
-            for exp in experiences:
-                s = exp.get("structured") or {}
-                with st.expander(exp.get("title") or "경험"):
-                    c1, c2, c3 = st.columns(3)
-                    c1.caption(f"사실상태: {exp.get('fact_status') or '-'}")
-                    c2.caption(f"역할: {s.get('my_role') or s.get('role') or '-'}")
-                    c3.caption(f"결과: {s.get('result') or '-'}")
-                    if s.get("missing_questions"):
-                        st.markdown("**추가하면 가치가 큰 정보**")
-                        for x in s.get("missing_questions", []):
-                            st.write("-", x)
-                    pretty(s)
-
+        experiences = list_experiences(USER_ID)
+        st.markdown(f"### 저장된 경험 {len(experiences)}개")
+        for exp in experiences:
+            s = exp.get("structured") or {}
+            with st.expander(exp.get("title") or "경험"):
+                if s.get("my_role"):
+                    st.write("**내 역할**", s.get("my_role"))
+                if s.get("problem"):
+                    st.write("**문제**", s.get("problem"))
+                if s.get("initial_judgment"):
+                    st.write("**판단**", s.get("initial_judgment"))
+                if s.get("initial_action"):
+                    st.write("**행동**", s.get("initial_action"))
+                if s.get("result"):
+                    st.write("**결과**", s.get("result"))
+                if s.get("missing_questions"):
+                    st.caption("보완하면 좋은 정보")
+                    _bullets(s.get("missing_questions"), 5)
 
 # =========================================================
-# EVIDENCE / ANALYSIS RECORD TAB
+# Archive: details only, out of the main flow
 # =========================================================
-with evidence_tab:
+with archive_tab:
     project = require_project()
-    st.subheader("분석 근거·중간 판단")
-    st.caption("메인 워크플로우에는 결과만 보여주고, AI가 사용한 자료·분석결과·사용자 지시 이력은 여기서 투명하게 확인합니다.")
-    sources_sub, analysis_sub, instruction_sub = st.tabs(["채용·기업 자료", "분석 상세", "AI 지시 이력"])
+    st.markdown("## 보관함")
+    st.caption("최종 자소서, 분석 근거, 검색자료, AI 지시 이력은 여기에서만 확인합니다.")
 
-    with sources_sub:
-        st.markdown("#### 자료 추가")
-        search_col, url_col, text_col = st.tabs(["자동 검색", "URL 가져오기", "본문 직접 저장"])
-        with search_col:
-            if recruiting_search_available():
-                st.caption("웹 검색은 Tavily, 분석·작성은 Gemini로 분리합니다. TAVILY_API_KEY가 있어야 자동 검색을 사용할 수 있습니다.")
-                if st.button("Tavily로 관련 채용자료 찾기", type="primary", use_container_width=True):
-                    try:
-                        ins = instruction_context(USER_ID, project["id"], "job")
-                        with st.spinner("기업·직무·지원조직 관련 공개 웹 자료를 검색하고 있습니다..."):
-                            st.session_state.recruit_search_results = search_recruiting_sources(
-                                project.get("company") or "", project.get("position") or "", project.get("team") or ""
-                            )
-                    except Exception as e:
-                        st.error(f"검색 실패: {e}")
-                for idx, item in enumerate(st.session_state.recruit_search_results):
-                    with st.expander(f"{idx+1}. {item.get('title') or '검색결과'}"):
-                        st.caption(item.get("url") or "Tavily 검색 결과")
-                        st.write((item.get("snippet") or "")[:1000])
-                        default_type = item.get("source_type") or "Google Search 근거"
-                        stype = st.selectbox(
-                            "자료 유형",
-                            [default_type, "공식 채용공고", "공식 직무기술서", "공식 회사자료", "공식 직무인터뷰", "과거 채용공고", "채용 플랫폼", "언론/산업자료", "기타"],
-                            key=f"search_stype_{idx}",
-                        )
-                        if st.button("이 자료 저장", key=f"save_search_{idx}"):
-                            trust = "official" if stype.startswith("공식") else (item.get("trust_level") or "supported")
-                            add_source(USER_ID, project["id"], stype, item.get("title") or stype, item.get("content") or item.get("snippet") or "", item.get("url") or "", trust)
-                            rerun()
-            else:
-                st.info("TAVILY_API_KEY가 설정되면 자동 웹 검색을 사용할 수 있습니다. 키가 없으면 URL/본문 직접 저장은 계속 사용할 수 있습니다.")
+    a1, a2, a3 = st.tabs(["자소서 저장본", "분석 근거", "AI 지시"])
+    with a1:
+        questions = list_questions(USER_ID, project["id"])
+        drafts = list_drafts(USER_ID, project["id"])
+        if not drafts:
+            st.info("저장된 자소서가 없습니다.")
+        else:
+            qmap = {str(q["id"]): q for q in questions}
+            for d in drafts:
+                q = qmap.get(str(d.get("question_id"))) or {}
+                label = f"{d.get('draft_type')} · {(q.get('question_text') or '')[:45]} · {(d.get('created_at') or '')[:16]}"
+                with st.expander(label):
+                    if d.get("title"):
+                        st.markdown(f"**[{d['title']}]**")
+                    st.write(d.get("content") or "")
 
-        with url_col:
-            with st.form("url_source_form"):
-                url = st.text_input("자료 URL")
-                source_type = st.selectbox("자료 유형", ["공식 채용공고", "공식 직무기술서", "공식 회사자료", "공식 직무인터뷰", "과거 채용공고", "채용 플랫폼", "언론/산업자료", "기타"])
-                if st.form_submit_button("URL 본문 가져와 저장", type="primary", use_container_width=True):
-                    try:
-                        page = fetch_url_text(url)
-                        trust = "official" if source_type.startswith("공식") else "supported"
-                        add_source(USER_ID, project["id"], source_type, page["title"], page["text"], page["url"], trust)
-                        st.success("자료를 저장했습니다.")
-                        rerun()
-                    except Exception as e:
-                        st.error(f"가져오기 실패: {e}")
+    with a2:
+        usage = get_monthly_research_usage(USER_ID)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("이번 달 웹검색", f"{usage.get('searches', 0)}회")
+        m2.metric("예상 Tavily credits", usage.get("credits", 0))
+        m3.metric("캐시 재사용", f"{usage.get('cache_hits', 0)}회")
 
-        with text_col:
-            with st.form("manual_source_form", clear_on_submit=True):
-                source_type = st.selectbox("자료 유형", ["공식 채용공고", "공식 직무기술서", "공식 회사자료", "공식 직무인터뷰", "과거 채용공고", "채용 플랫폼", "언론/산업자료", "기타"], key="manual_stype")
-                title = st.text_input("자료 제목")
-                url = st.text_input("출처 URL (선택)", key="manual_url")
-                content = st.text_area("본문", height=280, placeholder="채용공고나 직무기술서 내용을 그대로 붙여넣으세요.")
-                trust = st.selectbox("신뢰도", ["official", "supported", "inferred"], index=0 if source_type.startswith("공식") else 1)
-                if st.form_submit_button("본문 저장", type="primary", use_container_width=True):
-                    if not content.strip():
-                        st.error("본문을 입력해주세요.")
-                    else:
-                        add_source(USER_ID, project["id"], source_type, title or source_type, content, url, trust)
-                        st.success("자료를 저장했습니다.")
-                        rerun()
+        bundle = get_analysis(USER_ID, project["id"]) or {}
+        with st.expander("통합 지원기업 분석 원본"):
+            st.json(bundle.get("application") or {})
 
-        st.markdown("#### 저장된 근거")
         sources = list_sources(USER_ID, project["id"])
-        if not sources:
-            st.info("저장된 근거가 없습니다.")
+        st.markdown(f"### 저장된 웹·채용 근거 {len(sources)}개")
         for s in sources:
-            with st.expander(f"[{s.get('trust_level')}] {s.get('source_type')} · {s.get('title')}"):
-                st.caption(s.get("url") or "URL 없음")
-                st.text((s.get("content") or "")[:3000])
-                if st.button("이 자료 삭제", key=f"src_del_{s['id']}"):
+            title = s.get("title") or s.get("source_type") or "자료"
+            with st.expander(title):
+                st.caption(f"{s.get('source_type')} · {s.get('trust_level')}")
+                if s.get("url"):
+                    st.write(s.get("url"))
+                st.write((s.get("content") or "")[:5000])
+                if st.button("이 자료 삭제", key=f"del_source_{s['id']}"):
                     delete_source(USER_ID, project["id"], s["id"])
                     rerun()
 
-    with analysis_sub:
-        bundle = get_analysis(USER_ID, project["id"])
-        st.markdown("#### 기업분석 원본")
-        pretty(bundle.get("company") or {})
-        st.markdown("#### 채용직무분석 원본")
-        pretty(bundle.get("job") or {})
-        st.markdown("#### 문항 분석 원본")
-        for q in list_questions(USER_ID, project["id"]):
-            with st.expander(q["question_text"][:90]):
-                pretty(q.get("analysis") or {})
-        st.markdown("#### 소재 배분 원본")
-        pretty(get_allocation(USER_ID, project["id"]))
-
-    with instruction_sub:
-        instructions = list_instructions(USER_ID, project["id"], active_only=False)
-        if not instructions:
-            st.info("저장된 사용자 지시가 없습니다. 왼쪽 사이드바에서 언제든 추가할 수 있습니다.")
-        for item in reversed(instructions):
-            cols = st.columns([0.16, 0.64, 0.2])
-            cols[0].caption(item.get("scope") or "")
-            cols[1].write(item.get("instruction") or "")
-            if item.get("active"):
-                if cols[2].button("사용 중지", key=f"disable_{item['id']}"):
-                    deactivate_instruction(USER_ID, project["id"], item["id"])
+        with st.expander("근거 직접 추가"):
+            source_type = st.text_input("자료 유형", value="추가 자료")
+            source_title = st.text_input("제목")
+            source_url = st.text_input("URL")
+            source_text = st.text_area("내용", height=150)
+            if st.button("근거 저장", use_container_width=True):
+                content = source_text.strip()
+                if source_url.strip() and not content:
+                    try:
+                        content = fetch_url_text(source_url.strip())
+                    except Exception as e:
+                        st.error(f"URL 본문을 읽지 못했습니다: {e}")
+                if content:
+                    add_source(USER_ID, project["id"], source_type, source_title or source_type, content, source_url, "supported")
                     rerun()
-            else:
-                cols[2].caption("중지됨")
 
-
-# =========================================================
-# STORAGE TAB
-# =========================================================
-with storage_tab:
-    project = require_project()
-    st.subheader("저장소")
-    st.caption("완성본과 이전 버전을 프로젝트별로 보관합니다.")
-    qs = list_questions(USER_ID, project["id"])
-    if not qs:
-        st.info("저장된 자소서 문항이 없습니다.")
-    for idx, q in enumerate(qs, start=1):
-        with st.expander(f"{idx}. {q['question_text'][:90]}"):
-            ds = list_drafts(USER_ID, project["id"], q["id"])
-            if not ds:
-                st.caption("저장본 없음")
-            for d in ds:
-                st.markdown(f"**{d.get('draft_type','draft').upper()} · {d.get('title') or '소제목 없음'}**")
-                st.caption(d.get("created_at") or "")
-                st.text_area("내용", value=d.get("content") or "", height=220, key=f"stored_{d['id']}")
-                if d.get("review"):
-                    with st.expander("검토 기록"):
-                        pretty(d.get("review"))
-
-
-# =========================================================
-# SETTINGS TAB
-# =========================================================
-with settings_tab:
-    project = require_project()
-    st.subheader("프로젝트 설정")
-    st.caption("메인 워크플로우에서 자주 바꾸지 않는 정보만 여기 둡니다.")
-    with st.form("project_settings"):
-        company = st.text_input("기업명", value=project.get("company") or "")
-        position = st.text_input("지원 직무", value=project.get("position") or "")
-        team = st.text_input("사업부/팀/지원 조직", value=project.get("team") or "")
-        status_values = ["준비중", "작성중", "검토중", "지원완료", "서류합격", "불합격"]
-        current_status = project.get("status") if project.get("status") in status_values else "준비중"
-        status = st.selectbox("지원 상태", status_values, index=status_values.index(current_status))
-        notes = st.text_area("프로젝트 메모", value=project.get("notes") or "")
-        if st.form_submit_button("프로젝트 정보 저장", type="primary"):
-            update_project(USER_ID, project["id"], company=company, position=position, team=team, status=status, notes=notes)
-            st.success("프로젝트 정보를 저장했습니다.")
-            rerun()
-
-    st.divider()
-    st.markdown("#### 설계 원칙")
-    st.write("- 메인 화면은 **기업분석 → 채용직무분석 → 자소서 완성** 3단계만 크게 보여줍니다.")
-    st.write("- 이력서·경험 DB·근거·중간분석·지시 이력은 별도 탭에 둡니다.")
-    st.write("- '내가 하고 싶은 말'은 버릴 소재가 아니라 사용자가 반드시 전달하려는 핵심 의도로 취급합니다.")
-    st.write("- 문항 분석은 지원자에게 유리하게 해석하지 않고 필수조건과 감점요소를 냉정하게 분해합니다.")
-    st.write("- 경험이 문항 하드조건을 충족하지 못하면 자소서를 억지로 쓰지 않고 추가 사실을 요청합니다.")
+    with a3:
+        instructions = list_instructions(USER_ID, project["id"], active_only=True)
+        if not instructions:
+            st.info("활성화된 AI 지시가 없습니다.")
+        for ins in instructions:
+            with st.container(border=True):
+                st.caption(ins.get("scope") or "global")
+                st.write(ins.get("instruction") or "")
+                if st.button("이 지시 사용 중지", key=f"deact_{ins['id']}"):
+                    deactivate_instruction(USER_ID, project["id"], ins["id"])
+                    rerun()

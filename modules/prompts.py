@@ -77,6 +77,108 @@ USER_MESSAGE_RULES = """
 - 단, 명백한 사실 충돌이나 허위가 되는 내용은 사용할 수 없으며 어떤 확인이 필요한지 표시한다.
 """
 
+
+
+QUESTION_STRATEGIES = {
+    "support_motivation": {
+        "label": "지원동기",
+        "recruiter_focus": "왜 이 회사여야 하는지와 지원자의 관심·경험이 회사의 구체적 사실과 연결되는지",
+        "structure": ["개인적 관심/문제의식", "기업 고유 Fact", "왜 중요한지", "내 경험/관점과 접점", "지원직무 기여"],
+        "avoid": ["회사 칭찬 나열", "비전/인재상 복사", "회사명만 바꾸면 통하는 문장"],
+    },
+    "job_competency": {
+        "label": "직무역량",
+        "recruiter_focus": "입사 후 실제 업무를 수행할 수 있는 근거가 있는지",
+        "structure": ["직무의 핵심 문제", "관련 경험", "나의 판단", "구체 행동", "결과/증거", "직무에서의 재현"],
+        "avoid": ["자격증 나열", "JD 키워드 복사", "역량이 있다고만 주장"],
+    },
+    "problem_solving": {
+        "label": "문제해결",
+        "recruiter_focus": "원인을 어떻게 판단하고 행동을 수정했는지",
+        "structure": ["문제", "원인분석", "초기 판단", "첫 행동", "장애물/실패", "판단 수정", "후속 행동", "결과"],
+        "avoid": ["문제→바로 성공", "팀 해결을 개인 해결로 표현", "결과만 강조"],
+    },
+    "collaboration": {
+        "label": "협업",
+        "recruiter_focus": "공동 목표에서 본인이 어떤 역할과 조정 행동을 했는지",
+        "structure": ["공동 목표", "협업이 필요한 이유", "내 역할", "차이/문제", "구체 행동", "상대/팀의 변화", "결과"],
+        "avoid": ["소통했다로 끝내기", "팀 성과만 서술", "내 행동 불명확"],
+    },
+    "conflict": {
+        "label": "갈등",
+        "recruiter_focus": "의견 충돌 상황에서 기준과 관계를 어떻게 함께 관리했는지",
+        "structure": ["갈등 원인", "양측 관점", "내 판단 기준", "근거 제시", "조율 행동", "합의/결과"],
+        "avoid": ["상대를 이겼다는 서사", "상대 탓", "갈등 원인 생략"],
+    },
+    "challenge_achievement": {
+        "label": "도전/성취",
+        "recruiter_focus": "높은 목표를 스스로 정하고 끝까지 실행한 주도성",
+        "structure": ["목표 수준", "어려운 이유", "전략", "실행", "중간 장애물", "수정", "결과"],
+        "avoid": ["목표가 평범함", "성과만 강조", "주도성 불명확"],
+    },
+    "failure": {
+        "label": "실패",
+        "recruiter_focus": "실패를 숨기지 않고 원인을 인정하고 행동을 바꿨는지",
+        "structure": ["실패 사실", "원인 판단", "내 책임", "바꾼 행동", "이후 실제 행동 변화"],
+        "avoid": ["사실상 성공담", "실패 책임 회피", "배웠습니다로 끝내기"],
+    },
+    "growth_values": {
+        "label": "성장과정/가치관",
+        "recruiter_focus": "현재 업무 기준이 어떤 결정적 경험으로 형성됐는지",
+        "structure": ["현재 가치관", "결정적 경험", "당시 행동", "현재 반복되는 업무 행동"],
+        "avoid": ["연대기", "가족 이야기만 장황하게", "추상 가치만 선언"],
+    },
+    "strength_weakness": {
+        "label": "장단점",
+        "recruiter_focus": "반복되는 행동 특성과 약점을 실제로 관리하는 방식",
+        "structure": ["행동패턴", "실제 사례", "업무 영향", "보완 방식", "현재 상태"],
+        "avoid": ["완벽주의를 장점처럼 포장", "성격 형용사만 나열", "약점의 실제 영향 없음"],
+    },
+    "future_plan": {
+        "label": "입사 후 포부",
+        "recruiter_focus": "직무 이해를 바탕으로 현실적으로 어떤 기여를 확장할지",
+        "structure": ["초기 업무/산업 이해", "중기 독립적 결과", "장기 회사 과제와 연결되는 전문성"],
+        "avoid": ["근거 없는 1·3·5·10년 계획", "임원/전문가가 되겠다는 선언", "회사 과제와 무관한 목표"],
+    },
+    "industry_issue": {
+        "label": "산업/사회이슈",
+        "recruiter_focus": "정보 자체보다 현상을 해석하고 직무에 연결하는 관점",
+        "structure": ["검증된 Fact", "왜 중요한가", "기업/산업 영향", "지원직무 영향", "내 판단"],
+        "avoid": ["뉴스 요약", "출처 없는 전망", "정치적 주장 중심"],
+    },
+    "public_ethics": {
+        "label": "공기업/NCS/윤리",
+        "recruiter_focus": "공정·책임·규정·공공성이 충돌할 때 선택 기준과 실행",
+        "structure": ["실제 선택상황", "충돌한 가치", "선택 기준", "행동", "결과/책임"],
+        "avoid": ["공정이 중요하다고만 선언", "규정 준수만 말하고 상황 없음", "공공기관 인재상 복사"],
+    },
+    "freeform": {
+        "label": "자유문항",
+        "recruiter_focus": "다른 문항에서 아직 보여주지 못한 가장 강한 차별점",
+        "structure": ["미사용 핵심 강점", "증거 경험", "판단/행동", "지원직무 의미"],
+        "avoid": ["앞 문항 요약", "이력서 재나열", "새 정보 없음"],
+    },
+    "compound": {
+        "label": "복합문항",
+        "recruiter_focus": "한 문항 안의 모든 하위 질문을 빠짐없이 답했는지",
+        "structure": ["하위 Requirement 분해", "각 요구에 대응하는 근거", "중복 없는 통합", "전체 결론"],
+        "avoid": ["질문 일부만 답변", "한 경험으로 모든 질문 억지 연결", "분량 배분 실패"],
+    },
+}
+
+
+def _strategy_catalog() -> str:
+    return _j({k: {"label": v["label"], "recruiter_focus": v["recruiter_focus"], "structure": v["structure"], "avoid": v["avoid"]} for k, v in QUESTION_STRATEGIES.items()})
+
+
+def strategy_guidance(strategy_ids: list[str] | str | None) -> str:
+    if isinstance(strategy_ids, str):
+        strategy_ids = [strategy_ids]
+    strategy_ids = strategy_ids or []
+    selected = {k: QUESTION_STRATEGIES[k] for k in strategy_ids if k in QUESTION_STRATEGIES}
+    return _j(selected or {"freeform": QUESTION_STRATEGIES["freeform"]})
+
+
 QUESTION_ANALYSIS_RULES = """
 [문항 분석 원칙 — 정확하고 냉정하게]
 - 지원자에게 유리하게 해석하려 하지 말고 채용담당자가 실제로 무엇을 확인하려는지 분해한다.
@@ -208,6 +310,9 @@ def company_analysis_prompt(company: str, sources: list[dict], instructions: lis
   "current_challenges":[{{"challenge":"", "evidence":"", "source_ids":[], "confidence":"official|supported|inferred"}}],
   "market_competitor_context":[],
   "essay_specific_points":[{{"point":"", "use_case":"지원동기|직무연결|입사후포부|기타", "source_ids":[], "confidence":"official|supported|inferred"}}],
+  "source_coverage": {{"official_count":0, "supported_count":0, "inferred_count":0, "coverage_comment":""}},
+  "what_to_use_in_essay":[],
+  "what_not_to_use":[],
   "do_not_overclaim":[],
   "data_gaps":[]
 }}
@@ -271,6 +376,9 @@ def job_analysis_prompt(
   "competency_weights":[{{"competency":"", "weight":0, "reason":""}}],
   "company_to_job_link":[{{"company_change":"", "job_impact":"", "needed_behavior":"", "essay_use":""}}],
   "candidate_evidence_needed":[],
+  "source_coverage": {{"official_count":0, "supported_count":0, "inferred_count":0, "coverage_comment":""}},
+  "what_to_show_in_essay":[],
+  "what_not_to_claim":[],
   "data_gaps":[]
 }}
 """
@@ -304,7 +412,11 @@ def question_analysis_prompt(
 [사용자가 이번 문항에서 하고 싶은 말]
 {user_message or '[없음]'}
 
+[문항 전략 카탈로그]
+{_strategy_catalog()}
+
 [분석 과제]
+- 먼저 strategy_ids를 위 카탈로그의 key 중 1개 이상으로 분류한다. 복합문항이면 compound와 세부 유형을 함께 선택한다.
 - 문항에서 반드시 답해야 하는 요소를 빠짐없이 분해한다.
 - 하드 조건과 있으면 좋은 요소를 구분한다.
 - 어떤 경험이 '비슷해 보이지만 실제로는 부적합'한지 예시 기준을 만든다.
@@ -314,6 +426,8 @@ def question_analysis_prompt(
 다음 JSON만 반환하라.
 {{
   "question_type":"",
+  "strategy_ids":[],
+  "sub_requirements":[{{"requirement":"", "weight":0, "must_answer":true}}],
   "one_line_intent":"",
   "recruiter_is_testing":"",
   "must_answer_elements":[],
@@ -431,6 +545,8 @@ def essay_writer_prompt(
 {_j(question)}
 [냉정 문항 분석]
 {_j(question_analysis)}
+[선택된 문항별 작성 전략]
+{strategy_guidance(question_analysis.get("strategy_ids") or question_analysis.get("question_type"))}
 [소재 배정 / Requirement Gate]
 {_j(allocation)}
 [선택 경험]
@@ -451,7 +567,9 @@ def essay_writer_prompt(
 [작성 규칙]
 - requirement_gate가 gap이면 허위로 채우지 않는다. status를 needs_information으로 반환하고 필요한 질문을 제시한다.
 - 사용자가 하고 싶은 말의 핵심 의도를 우선 보존한다. 문항에 맞게 경험/기업/직무 근거를 붙여 재구성한다.
-- 문항의 모든 must_answer_elements에 실제로 답한다.
+- 문항의 모든 must_answer_elements와 sub_requirements에 실제로 답한다.
+- 선택된 문항별 작성 전략의 recruiter_focus와 structure를 참고하되, 사실에 없는 장면을 만들지 않는다.
+- 각 문항의 avoid 항목을 감점 규칙으로 취급한다.
 - 소제목을 포함한다. 소제목은 경험의 핵심 사건·판단·변화를 드러낸다.
 - 글자수 제한이 있으면 제한 안에서 정보 밀도를 높인다.
 - Action은 '소통했다/분석했다/노력했다'로 끝내지 말고 무엇을 어떻게 했는지 적는다.
@@ -502,6 +620,8 @@ def review_prompt(
 {_j(question)}
 [문항 분석]
 {_j(question_analysis)}
+[선택된 문항별 평가 전략]
+{strategy_guidance(question_analysis.get("strategy_ids") or question_analysis.get("question_type"))}
 [소재 배정]
 {_j(allocation)}
 [원 경험]
@@ -545,5 +665,265 @@ def review_prompt(
   "revision_notes":[],
   "revised_title":"",
   "revised_essay":""
+}}
+"""
+
+
+def recruiter_review_prompt(
+    essay: str,
+    question: dict,
+    question_analysis: dict,
+    allocation: dict,
+    company_analysis: dict,
+    job_analysis: dict,
+    user_message: str = "",
+    instructions: list[dict] | None = None,
+) -> str:
+    return f"""
+너는 Writer와 분리된 Recruiter Reviewer다. 아직 글을 고치지 말고 채용담당자처럼 감점 이유를 먼저 평가하라.
+
+{QUESTION_ANALYSIS_RULES}
+{USER_MESSAGE_RULES}
+{NON_REPEAT_RULES}
+{_instruction_block(instructions)}
+
+[문항]
+{_j(question)}
+[문항 분석]
+{_j(question_analysis)}
+[문항별 평가 전략]
+{strategy_guidance(question_analysis.get("strategy_ids") or question_analysis.get("question_type"))}
+[소재 배정]
+{_j(allocation)}
+[기업 분석]
+{_j(company_analysis)}
+[직무 분석]
+{_j(job_analysis)}
+[사용자가 하고 싶은 말]
+{user_message or '[없음]'}
+[초안]
+{essay}
+
+[평가 원칙]
+- 좋은 점을 찾아주는 것이 목적이 아니다. 실제 서류평가에서 감점될 지점을 구체적으로 찾는다.
+- 문항 일부 미응답, 경험 부적합, 본인 행동 불명확, 판단과정 부재, 결과 근거 부족, 기업/직무 generic 연결을 각각 따로 본다.
+- 문장 단위로 문제 위치를 짧게 인용하되 긴 문장을 복사하지 않는다.
+- 수정문은 만들지 않는다.
+
+다음 JSON만 반환하라.
+{{
+  "scores": {{
+    "question_fit":0, "requirement_fit":0, "job_fit":0, "company_fit":0,
+    "specificity":0, "action_judgment":0, "evidence":0, "uniqueness":0,
+    "naturalness":0, "credibility":0, "user_intent_preservation":0
+  }},
+  "fatal_issues":[],
+  "deductions":[{{"area":"", "reason":"", "severity":"high|medium|low", "location_hint":""}}],
+  "missing_question_elements":[],
+  "generic_issues":[],
+  "repetition_issues":[],
+  "keep_points":[]
+}}
+"""
+
+
+def fact_check_prompt(
+    essay: str,
+    question: dict,
+    experience: dict,
+    candidate_profile: dict,
+    company_analysis: dict,
+    job_analysis: dict,
+    prior_usage: list[dict],
+) -> str:
+    return f"""
+너는 Writer와 Reviewer와 분리된 Fact Checker다. 문장을 더 좋게 고치지 말고 사실성만 검사하라.
+
+{FACT_RULES}
+{NON_REPEAT_RULES}
+
+[문항]
+{_j(question)}
+[검토할 초안]
+{essay}
+[배정 경험]
+{_j(experience)}
+[지원자 프로필]
+{_j(candidate_profile)}
+[기업 분석]
+{_j(company_analysis)}
+[직무 분석]
+{_j(job_analysis)}
+[이전 문항 사용 소재]
+{_j(prior_usage)}
+
+[검사 항목]
+- 숫자, 기간, 자격, 조직명, 직책, 도구, 결과, 성과, 본인 역할을 근거와 대조한다.
+- 회사/직무 사실도 source confidence를 확인한다.
+- 문장별로 supported / needs_confirmation / unsupported로 구분한다.
+- 의미상 같은 경험·학력·자격이 이전 문항에서 이미 핵심으로 사용됐는지도 표시한다.
+- unsupported를 그럴듯하게 보완하지 않는다.
+
+다음 JSON만 반환하라.
+{{
+  "overall":"supported|needs_confirmation|unsupported",
+  "claims":[{{"claim":"", "status":"supported|needs_confirmation|unsupported", "basis":"", "action":"keep|confirm|remove_or_rewrite"}}],
+  "fact_issues":[],
+  "semantic_repetition":[],
+  "confirmation_questions":[]
+}}
+"""
+
+
+def final_edit_prompt(
+    essay: str,
+    question: dict,
+    question_analysis: dict,
+    recruiter_review: dict,
+    fact_check: dict,
+    user_message: str,
+    style_sample: str,
+    instructions: list[dict] | None = None,
+) -> str:
+    return f"""
+너는 마지막 Human Style Editor + Final Editor다. 새 사실을 추가하지 말고 앞선 Reviewer와 Fact Checker의 지적만 반영해 제출 가능한 최종본을 만든다.
+
+{FACT_RULES}
+{USER_MESSAGE_RULES}
+{STYLE_RULES}
+{NON_REPEAT_RULES}
+{ACCEPTED_STRUCTURE_RULES}
+{_instruction_block(instructions)}
+
+[문항]
+{_j(question)}
+[문항 분석]
+{_j(question_analysis)}
+[문항별 작성 전략]
+{strategy_guidance(question_analysis.get("strategy_ids") or question_analysis.get("question_type"))}
+[원 초안]
+{essay}
+[Recruiter Reviewer]
+{_j(recruiter_review)}
+[Fact Checker]
+{_j(fact_check)}
+[사용자가 반드시 전달하고 싶은 말]
+{user_message or '[없음]'}
+[지원자 문체 샘플]
+{style_sample or '[없음]'}
+
+[최종 편집 규칙]
+- unsupported 사실은 삭제하거나 확인된 범위로 낮춰 쓴다.
+- needs_confirmation은 확인 없이 확정 수치/성과로 쓰지 않는다.
+- 사용자의 핵심 메시지는 보존한다.
+- '생각합니다/이를 통해/또한/특히/나아가'의 기계적 반복을 줄인다.
+- 빈 수식어를 실제 행동으로 바꾼다.
+- 소제목은 본문 완성 후 핵심 사건·판단·변화가 드러나도록 정한다.
+- 글자수 제한이 있으면 그 안에서 문항 필수요소를 우선한다.
+
+다음 JSON만 반환하라.
+{{
+  "title":"",
+  "final_essay":"",
+  "changes":[],
+  "remaining_confirmations":[],
+  "character_count":0
+}}
+"""
+
+
+def application_analysis_prompt(
+    company: str,
+    position: str,
+    team: str,
+    sources: list[dict],
+    instructions: list[dict] | None = None,
+) -> str:
+    """One-pass company + role + recruiting analysis for a single application workspace."""
+    compact_sources = [
+        {
+            "id": s.get("id"),
+            "source_type": s.get("source_type"),
+            "title": s.get("title"),
+            "url": s.get("url"),
+            "trust_level": s.get("trust_level"),
+            "content": (s.get("content") or "")[:14000],
+        }
+        for s in sources
+    ]
+    return f"""
+너는 한국 취업 지원서용 Application Research Analyst다.
+이번 작업은 회사소개 보고서를 만드는 것이 아니다. **한 기업의 한 직무 자소서를 쓰기 위해 필요한 기업·직무·채용 정보를 하나의 지원 맥락으로 통합**하는 것이 목적이다.
+
+{MASTER_FRAMEWORK}
+{SOURCE_RULES}
+{FACT_RULES}
+{_instruction_block(instructions)}
+
+[지원 대상]
+회사: {company}
+지원 직무: {position}
+지원 조직/팀: {team or '[미입력]'}
+
+[수집 자료]
+{_j(compact_sources)}
+
+[반드시 지킬 분석 순서]
+1. 회사의 핵심 사업/제품/서비스와 최근 변화·과제를 확인한다.
+2. 해당 변화가 지원 조직/직무에 어떤 업무 요구를 만드는지 연결한다.
+3. 실제 채용공고·직무기술서에서 수행업무, 필수/우대조건, 반복 표현을 분리한다.
+4. '협업', '분석력' 같은 추상어를 실제 행동역량으로 번역한다.
+5. 회사가 왜 지금 이 직무 인력을 필요로 하는지 설명할 수 있는 연결고리를 만든다.
+6. 최종적으로 자소서 문항에서 반드시 보여줘야 할 지원자 증거를 우선순위로 정리한다.
+7. 확인되지 않은 팀 업무·KPI·채용의도는 inferred로 표시한다.
+8. 회사 칭찬, 인재상 복사, 출처 없는 전망은 분석 결과에서 배제한다.
+
+다음 JSON만 반환하라.
+{{
+  "company": {{
+    "business_summary":"",
+    "key_businesses":[],
+    "products_services":[],
+    "recent_changes":[{{"fact":"", "why_it_matters":"", "source_ids":[], "confidence":"official|supported|inferred"}}],
+    "current_challenges":[{{"challenge":"", "evidence":"", "source_ids":[], "confidence":"official|supported|inferred"}}],
+    "essay_specific_points":[{{"point":"", "use_case":"지원동기|직무연결|입사후포부|기타", "source_ids":[], "confidence":"official|supported|inferred"}}],
+    "what_not_to_use":[],
+    "data_gaps":[]
+  }},
+  "job": {{
+    "posting_summary":"",
+    "core_tasks":[{{"task":"", "source_ids":[], "confidence":"official|supported|inferred"}}],
+    "required_qualifications":[],
+    "preferred_qualifications":[],
+    "technical_skills":[],
+    "behavior_competencies":[{{"competency":"", "observable_behavior":"", "why_required":""}}],
+    "team": {{"known_work":[], "inferred_work":[], "collaboration_targets":[], "tools_data":[], "key_problems":[]}},
+    "hidden_hiring_intents":[{{"intent":"", "basis":"", "confidence":"supported|inferred"}}],
+    "competency_weights":[{{"competency":"", "weight":0, "reason":""}}],
+    "company_to_job_link":[{{"company_change":"", "job_impact":"", "needed_behavior":"", "essay_use":""}}],
+    "candidate_evidence_needed":[],
+    "what_not_to_claim":[],
+    "data_gaps":[]
+  }},
+  "recruiting": {{
+    "must_show_in_essay":[],
+    "strong_differentiators":[],
+    "likely_deduction_points":[],
+    "posting_evidence_gaps":[]
+  }},
+  "application_summary": {{
+    "one_line":"",
+    "top_company_facts":[],
+    "top_job_requirements":[],
+    "top_essay_messages":[],
+    "candidate_questions_to_answer":[],
+    "risks":[]
+  }},
+  "source_coverage": {{
+    "official_count":0,
+    "supported_count":0,
+    "inferred_count":0,
+    "coverage_comment":""
+  }}
 }}
 """

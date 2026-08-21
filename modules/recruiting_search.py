@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -90,13 +92,27 @@ def _search(query: str, max_results: int = 8) -> dict:
         "include_images": False,
     }
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    response = requests.post(TAVILY_ENDPOINT, json=payload, headers=headers, timeout=45)
-    if response.status_code == 401:
-        raise RuntimeError("Tavily API 키 인증에 실패했습니다. Streamlit Secrets의 TAVILY_API_KEY를 확인해주세요.")
-    if response.status_code == 429:
-        raise RuntimeError("Tavily 검색 한도를 초과했습니다. 저장된 캐시 자료는 계속 사용할 수 있습니다.")
-    response.raise_for_status()
-    return response.json()
+    response = None
+    last_error = None
+    for attempt in range(2):
+        try:
+            response = requests.post(TAVILY_ENDPOINT, json=payload, headers=headers, timeout=45)
+            if response.status_code == 401:
+                raise RuntimeError("Tavily API 키 인증에 실패했습니다. Streamlit Secrets의 TAVILY_API_KEY를 확인해주세요.")
+            if response.status_code == 429:
+                raise RuntimeError("Tavily 검색 한도를 초과했습니다. 저장된 캐시 자료는 계속 사용할 수 있습니다.")
+            if response.status_code >= 500 and attempt == 0:
+                time.sleep(1.2 + random.uniform(0.2, 0.8))
+                continue
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(1.2 + random.uniform(0.2, 0.8))
+                continue
+            break
+    raise RuntimeError(f"Tavily 검색 서버에 일시적인 오류가 발생했습니다. 저장된 캐시가 있으면 계속 사용할 수 있습니다. ({last_error})")
 
 
 def _normalize(data: dict) -> list[dict]:
