@@ -30,6 +30,7 @@ from modules.repository import (
     delete_source,
     get_allocation,
     get_analysis,
+    get_monthly_research_usage,
     get_candidate_profile,
     get_project,
     instruction_context,
@@ -60,7 +61,7 @@ from modules.web_ingest import fetch_url_text
 
 APP_TITLE = "Career Essay AI"
 APP_SUBTITLE = "기업을 이해하고 · 채용직무를 해석하고 · 내 경험으로 자소서를 완성합니다"
-VERSION = "v0.2.2"
+VERSION = "v0.2.4"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📝", layout="wide")
 
@@ -410,12 +411,18 @@ with main_tab:
         c2.metric("공식 근거", f"{sum(1 for s in sources if s.get('trust_level') == 'official')}개")
         c3.metric("분석 상태", "완료" if company_data else "진행 전")
 
-        st.info("기업명만으로 시작할 수 있습니다. **실행 버튼을 누르면 AI가 Google Search로 공식 홈페이지·공시·최근 이슈를 먼저 찾고, 그 근거를 저장한 뒤 기업분석을 진행합니다.**")
-        if st.button("웹 리서치 + 기업분석 실행 / 다시 분석", type="primary", use_container_width=True):
+        usage = get_monthly_research_usage(USER_ID)
+        st.info("기업명만으로 시작합니다. **최근 30일 안에 같은 기업을 검색한 기록이 있으면 Supabase 캐시를 재사용해 Tavily 크레딧을 쓰지 않습니다.** 캐시가 없거나 만료됐을 때만 Basic Search 1회를 호출합니다.")
+        uc1, uc2, uc3 = st.columns(3)
+        uc1.metric("이번 달 Tavily 실검색", f"{usage.get('searches', 0)}회")
+        uc2.metric("예상 사용 크레딧", f"{usage.get('credits', 0)}")
+        uc3.metric("캐시 재사용", f"{usage.get('cache_hits', 0)}회")
+        force_company = st.checkbox("기업자료 강제 새로검색 (크레딧 사용)", value=False, key="force_company_refresh")
+        if st.button("기업자료 확인 + 기업분석 실행 / 다시 분석", type="primary", use_container_width=True):
             try:
                 ins = instruction_context(USER_ID, project["id"], "company")
-                with st.spinner("웹에서 공식자료·공시·최근 사업 이슈를 찾고 있습니다..."):
-                    web_research = research_company_sources(project["company"], ins)
+                with st.spinner("저장된 검색자료를 먼저 확인하고, 필요할 때만 웹 검색합니다..."):
+                    web_research = research_company_sources(project["company"], ins, user_id=USER_ID, project_id=project["id"], force_refresh=force_company)
                     saved_count = save_auto_research_results(USER_ID, project["id"], web_research.get("results") or [])
                     sources = list_sources(USER_ID, project["id"])
                 if not sources:
@@ -425,7 +432,8 @@ with main_tab:
                 result["web_research_queries"] = web_research.get("queries") or []
                 result["auto_sources_added"] = saved_count
                 save_analysis_section(USER_ID, project["id"], "company", result)
-                st.success(f"기업분석을 저장했습니다. 자동 웹 근거 {saved_count}개를 새로 저장했습니다.")
+                cache_note = "캐시 재사용 · Tavily 0 credit" if web_research.get("cache_hit") else "새 웹검색 · 예상 1 credit"
+                st.success(f"기업분석을 저장했습니다. {cache_note} / 프로젝트에 새 근거 {saved_count}개 저장")
                 rerun()
             except Exception as e:
                 st.error(f"기업분석 실패: {e}")
@@ -450,14 +458,16 @@ with main_tab:
         st.caption("채용공고를 단어만 추출하지 않고 실제 업무·행동역량·지원조직·숨은 채용의도로 해석합니다.")
         if not company_data:
             st.warning("1단계 기업분석을 먼저 완료하는 것을 권장합니다. 직무분석 자체는 자동 웹 검색으로 실행할 수 있습니다.")
-        st.info("AI가 **현재/최근 채용공고, 공식 직무소개, 지원조직 자료, 유사·과거 공고**를 먼저 검색한 뒤 실제 업무와 채용의도를 분석합니다.")
+        st.info("채용·직무 검색은 **7일 캐시**를 사용합니다. 같은 기업·직무·지원팀을 다시 분석하면 저장자료를 먼저 재사용하고, 만료되었을 때만 Tavily를 다시 호출합니다.")
+        force_job = st.checkbox("채용·직무자료 강제 새로검색 (크레딧 사용)", value=False, key="force_job_refresh")
 
-        if st.button("채용자료 자동검색 + 채용직무분석 실행 / 다시 분석", type="primary", use_container_width=True):
+        if st.button("채용자료 확인 + 채용직무분석 실행 / 다시 분석", type="primary", use_container_width=True):
             try:
                 ins = instruction_context(USER_ID, project["id"], "job")
-                with st.spinner("최신 채용공고·직무기술서·지원조직 자료를 웹에서 찾고 있습니다..."):
+                with st.spinner("저장된 채용자료를 먼저 확인하고, 필요할 때만 웹 검색합니다..."):
                     web_research = research_job_sources(
-                        project["company"], project["position"], project.get("team") or "", ins
+                        project["company"], project["position"], project.get("team") or "", ins,
+                        user_id=USER_ID, project_id=project["id"], force_refresh=force_job
                     )
                     saved_count = save_auto_research_results(USER_ID, project["id"], web_research.get("results") or [])
                     sources = list_sources(USER_ID, project["id"])
@@ -470,7 +480,8 @@ with main_tab:
                 result["web_research_queries"] = web_research.get("queries") or []
                 result["auto_sources_added"] = saved_count
                 save_analysis_section(USER_ID, project["id"], "job", result)
-                st.success(f"채용직무분석을 저장했습니다. 자동 웹 근거 {saved_count}개를 새로 저장했습니다.")
+                cache_note = "캐시 재사용 · Tavily 0 credit" if web_research.get("cache_hit") else "새 웹검색 · 예상 1 credit"
+                st.success(f"채용직무분석을 저장했습니다. {cache_note} / 프로젝트에 새 근거 {saved_count}개 저장")
                 rerun()
             except Exception as e:
                 st.error(f"채용직무분석 실패: {e}")
@@ -912,8 +923,8 @@ with evidence_tab:
         search_col, url_col, text_col = st.tabs(["자동 검색", "URL 가져오기", "본문 직접 저장"])
         with search_col:
             if recruiting_search_available():
-                st.caption("별도 검색 API가 필요하지 않습니다. 기존 GEMINI_API_KEY의 Google Search grounding을 사용합니다.")
-                if st.button("Google Search로 관련 채용자료 찾기", type="primary", use_container_width=True):
+                st.caption("웹 검색은 Tavily, 분석·작성은 Gemini로 분리합니다. TAVILY_API_KEY가 있어야 자동 검색을 사용할 수 있습니다.")
+                if st.button("Tavily로 관련 채용자료 찾기", type="primary", use_container_width=True):
                     try:
                         ins = instruction_context(USER_ID, project["id"], "job")
                         with st.spinner("기업·직무·지원조직 관련 공개 웹 자료를 검색하고 있습니다..."):
@@ -924,7 +935,7 @@ with evidence_tab:
                         st.error(f"검색 실패: {e}")
                 for idx, item in enumerate(st.session_state.recruit_search_results):
                     with st.expander(f"{idx+1}. {item.get('title') or '검색결과'}"):
-                        st.caption(item.get("url") or "Google Search 기반 종합 리서치")
+                        st.caption(item.get("url") or "Tavily 검색 결과")
                         st.write((item.get("snippet") or "")[:1000])
                         default_type = item.get("source_type") or "Google Search 근거"
                         stype = st.selectbox(
@@ -937,7 +948,7 @@ with evidence_tab:
                             add_source(USER_ID, project["id"], stype, item.get("title") or stype, item.get("content") or item.get("snippet") or "", item.get("url") or "", trust)
                             rerun()
             else:
-                st.info("GEMINI_API_KEY가 설정되면 자동 Google Search를 사용할 수 있습니다.")
+                st.info("TAVILY_API_KEY가 설정되면 자동 웹 검색을 사용할 수 있습니다. 키가 없으면 URL/본문 직접 저장은 계속 사용할 수 있습니다.")
 
         with url_col:
             with st.form("url_source_form"):

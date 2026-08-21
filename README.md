@@ -1,4 +1,4 @@
-# Career Essay AI v0.2.2
+# Career Essay AI v0.2.4
 
 자기소개서 작성이 중심인 Streamlit + Supabase 프로그램입니다.
 
@@ -8,10 +8,10 @@
 
 이력서, 경험 DB, 채용자료, 분석 원본, 사용자 프롬프트 지시 이력, 자소서 버전은 보조 탭으로 분리해 메인 화면을 단순하게 유지합니다.
 
-## v0.2.2 핵심 변경
+## v0.2.3 핵심 변경
 
 ### 자동 웹 리서치
-- **기업분석 실행**: 회사명만으로 Google Search → 공식 홈페이지/공시/최근 이슈 수집 → 근거 저장 → 기업분석
+- **기업분석 실행**: 회사명만으로 Tavily Search → 공식 홈페이지/공시/최근 이슈 수집 → 근거 저장 → 기업분석
 - **채용직무분석 실행**: 기업명+직무명으로 최신/최근 채용공고·직무기술서·지원조직 자료 검색 → 근거 저장 → 직무분석
 - 분석 근거 탭에서 검색 결과와 중간 분석을 별도로 확인 가능
 - 별도 Tavily 키 불필요. 기존 `GEMINI_API_KEY`만 사용
@@ -180,7 +180,7 @@ streamlit run streamlit_app.py
 
 ## 현재 범위
 
-현재 버전은 프롬프트/워크플로우와 사용자별 영구 저장 구조를 구현한 MVP입니다. 기업분석과 채용직무분석을 실행하면 기존 GEMINI_API_KEY를 이용한 **Gemini Google Search grounding**이 먼저 공개 웹을 검색하고, 검색 근거를 프로젝트 DB에 저장한 뒤 분석합니다. 별도의 Tavily API 키는 필요하지 않습니다. 사용자는 필요할 때만 URL/본문 자료를 추가하면 됩니다. 사람인/잡코리아/원티드 등 로그인·동적 렌더링이 필요한 사이트의 전용 Connector/API 연동은 후속 Recruiting Intelligence 확장 단계입니다.
+현재 버전은 프롬프트/워크플로우와 사용자별 영구 저장 구조를 구현한 MVP입니다. 기업분석과 채용직무분석을 실행하면 기존 GEMINI_API_KEY를 이용한 **Tavily 웹 검색 + Gemini 분석**이 먼저 공개 웹을 검색하고, 검색 근거를 프로젝트 DB에 저장한 뒤 분석합니다. 자동 웹 검색에는 TAVILY_API_KEY가 필요합니다. Gemini는 검색 결과 분석과 자소서 작성에만 사용합니다. 사용자는 필요할 때만 URL/본문 자료를 추가하면 됩니다. 사람인/잡코리아/원티드 등 로그인·동적 렌더링이 필요한 사이트의 전용 Connector/API 연동은 후속 Recruiting Intelligence 확장 단계입니다.
 
 
 ## Gemini 모델 설정
@@ -190,3 +190,15 @@ streamlit run streamlit_app.py
 ```toml
 GEMINI_MODEL="gemini-3.6-flash"
 ```
+
+
+## v0.2.4 검색비 절약 / 캐시 정책
+
+- 기업 웹자료: **30일 캐시**
+- 채용·직무자료: **7일 캐시**
+- 동일 기업/직무 재분석: Supabase `research_cache`를 먼저 사용 → **Tavily 0 credit**
+- 캐시 만료/없음: Tavily `basic` 검색 1회 → **예상 1 credit**
+- 사용자 프롬프트는 분석 단계에 적용하고, raw 검색 캐시 키를 불필요하게 쪼개지 않음
+- `강제 새로검색`을 체크한 경우에만 캐시가 있어도 실제 웹검색
+- 앱에 이번 달 실제 검색/예상 크레딧/캐시 재사용 횟수 표시
+- 기존 v0.2.3 DB 사용자는 `supabase_upgrade_v0.2.4.sql`을 Supabase SQL Editor에서 한 번 실행

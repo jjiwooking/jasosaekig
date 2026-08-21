@@ -195,6 +195,96 @@ def update_source(
         ).eq("id", source_id).execute()
 
 
+# ---------------- Shared web research cache / usage ----------------
+def get_research_cache(cache_key: str) -> dict | None:
+    """Return a cache row. Freshness is evaluated by the caller."""
+    try:
+        rows = get_supabase().table("research_cache").select("*").eq(
+            "cache_key", cache_key
+        ).limit(1).execute().data or []
+        return _one(rows)
+    except Exception:
+        # v0.2.4 DB upgrade not yet applied: keep the app usable without cache.
+        return None
+
+
+def save_research_cache(
+    cache_key: str,
+    research_type: str,
+    company: str,
+    position: str,
+    team: str,
+    query_text: str,
+    results: list[dict],
+    expires_at: str,
+) -> None:
+    row = {
+        "cache_key": cache_key,
+        "research_type": research_type,
+        "company": company.strip(),
+        "position": position.strip() or None,
+        "team": team.strip() or None,
+        "query_text": query_text,
+        "results": results or [],
+        "searched_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        "expires_at": expires_at,
+    }
+    try:
+        sb = get_supabase()
+        existing = sb.table("research_cache").select("cache_key").eq("cache_key", cache_key).execute().data or []
+        if existing:
+            sb.table("research_cache").update(row).eq("cache_key", cache_key).execute()
+        else:
+            sb.table("research_cache").insert(row).execute()
+    except Exception:
+        pass
+
+
+def bump_research_cache_use(cache_key: str) -> None:
+    try:
+        row = get_research_cache(cache_key) or {}
+        current = int(row.get("use_count") or 0)
+        get_supabase().table("research_cache").update({"use_count": current + 1}).eq(
+            "cache_key", cache_key
+        ).execute()
+    except Exception:
+        pass
+
+
+def log_research_usage(
+    user_id: str, project_id: str, research_type: str, cache_key: str, source: str, credits_estimate: int
+) -> None:
+    try:
+        get_supabase().table("research_usage").insert({
+            "user_id": user_id,
+            "project_id": project_id,
+            "research_type": research_type,
+            "cache_key": cache_key,
+            "source": source,
+            "credits_estimate": int(credits_estimate),
+        }).execute()
+    except Exception:
+        pass
+
+
+def get_monthly_research_usage(user_id: str) -> dict:
+    """Approximate Tavily Basic Search credits used by this app in the current UTC month."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    try:
+        rows = get_supabase().table("research_usage").select("source,credits_estimate").eq(
+            "user_id", user_id
+        ).gte("created_at", start).execute().data or []
+    except Exception:
+        return {"searches": 0, "credits": 0, "cache_hits": 0}
+    return {
+        "searches": sum(1 for r in rows if r.get("source") == "tavily"),
+        "credits": sum(int(r.get("credits_estimate") or 0) for r in rows),
+        "cache_hits": sum(1 for r in rows if r.get("source") == "cache"),
+    }
+
+
 # ---------------- Analyses: one JSON record, separate sections ----------------
 def get_analysis(user_id: str, project_id: str) -> dict:
     rows = get_supabase().table("project_analyses").select("analysis").eq(
