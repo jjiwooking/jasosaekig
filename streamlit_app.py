@@ -47,9 +47,12 @@ from modules.repository import (
     save_draft,
     update_project,
     update_question,
+    update_source,
 )
 from modules.recruiting_search import (
     is_available as recruiting_search_available,
+    research_company_sources,
+    research_job_sources,
     search_recruiting_sources,
 )
 from modules.web_ingest import fetch_url_text
@@ -57,7 +60,7 @@ from modules.web_ingest import fetch_url_text
 
 APP_TITLE = "Career Essay AI"
 APP_SUBTITLE = "기업을 이해하고 · 채용직무를 해석하고 · 내 경험으로 자소서를 완성합니다"
-VERSION = "v0.2"
+VERSION = "v0.2.2"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📝", layout="wide")
 
@@ -138,6 +141,39 @@ def require_project():
         st.stop()
     return project
 
+
+
+
+def save_auto_research_results(user_id: str, project_id: str, results: list[dict]) -> int:
+    """Persist grounded research without creating duplicates on every re-analysis."""
+    existing = list_sources(user_id, project_id)
+    existing_map = {
+        ((row.get("url") or "").strip(), (row.get("title") or "").strip()): row
+        for row in existing
+    }
+    saved = 0
+    for item in results or []:
+        title = (item.get("title") or item.get("source_type") or "자동 웹 리서치").strip()
+        url = (item.get("url") or "").strip()
+        key = (url, title)
+        content = (item.get("content") or item.get("snippet") or "").strip()
+        if not content and not url:
+            continue
+        source_type = item.get("source_type") or "Google Search 근거"
+        trust = item.get("trust_level") or "supported"
+        existing_row = existing_map.get(key)
+        if existing_row:
+            # Refresh the synthesis/snippet on re-analysis so the DB does not stay stale.
+            if content and content != (existing_row.get("content") or ""):
+                update_source(
+                    user_id, project_id, existing_row["id"],
+                    source_type=source_type, title=title, content=content, url=url, trust_level=trust,
+                )
+            continue
+        row = add_source(user_id, project_id, source_type, title, content, url, trust)
+        existing_map[key] = row or {"title": title, "url": url, "content": content}
+        saved += 1
+    return saved
 
 def stage_status(project_id: str) -> dict:
     analysis = get_analysis(USER_ID, project_id)
@@ -374,15 +410,22 @@ with main_tab:
         c2.metric("공식 근거", f"{sum(1 for s in sources if s.get('trust_level') == 'official')}개")
         c3.metric("분석 상태", "완료" if company_data else "진행 전")
 
-        if not sources:
-            st.info("먼저 **분석 근거** 탭에서 채용공고·회사 공식자료를 추가해주세요. 자료가 없으면 정확한 기업분석을 할 수 없습니다.")
-        if st.button("기업분석 실행 / 다시 분석", type="primary", use_container_width=True, disabled=not bool(sources)):
+        st.info("기업명만으로 시작할 수 있습니다. **실행 버튼을 누르면 AI가 Google Search로 공식 홈페이지·공시·최근 이슈를 먼저 찾고, 그 근거를 저장한 뒤 기업분석을 진행합니다.**")
+        if st.button("웹 리서치 + 기업분석 실행 / 다시 분석", type="primary", use_container_width=True):
             try:
                 ins = instruction_context(USER_ID, project["id"], "company")
-                with st.spinner("공식 근거와 최근 변화의 관계를 분석하고 있습니다..."):
+                with st.spinner("웹에서 공식자료·공시·최근 사업 이슈를 찾고 있습니다..."):
+                    web_research = research_company_sources(project["company"], ins)
+                    saved_count = save_auto_research_results(USER_ID, project["id"], web_research.get("results") or [])
+                    sources = list_sources(USER_ID, project["id"])
+                if not sources:
+                    raise RuntimeError("웹 검색에서 분석에 사용할 근거를 확보하지 못했습니다. 회사명이 정확한지 확인해주세요.")
+                with st.spinner("수집한 근거를 바탕으로 자소서용 기업분석을 만들고 있습니다..."):
                     result = generate_json(company_analysis_prompt(project["company"], sources, ins))
+                result["web_research_queries"] = web_research.get("queries") or []
+                result["auto_sources_added"] = saved_count
                 save_analysis_section(USER_ID, project["id"], "company", result)
-                st.success("기업분석을 저장했습니다.")
+                st.success(f"기업분석을 저장했습니다. 자동 웹 근거 {saved_count}개를 새로 저장했습니다.")
                 rerun()
             except Exception as e:
                 st.error(f"기업분석 실패: {e}")
@@ -406,19 +449,28 @@ with main_tab:
         st.subheader(f"{project['position']} 채용직무분석")
         st.caption("채용공고를 단어만 추출하지 않고 실제 업무·행동역량·지원조직·숨은 채용의도로 해석합니다.")
         if not company_data:
-            st.warning("1단계 기업분석을 먼저 완료하는 것을 권장합니다.")
-        if not sources:
-            st.info("분석 근거 탭에 채용공고 또는 직무기술서를 추가해주세요.")
+            st.warning("1단계 기업분석을 먼저 완료하는 것을 권장합니다. 직무분석 자체는 자동 웹 검색으로 실행할 수 있습니다.")
+        st.info("AI가 **현재/최근 채용공고, 공식 직무소개, 지원조직 자료, 유사·과거 공고**를 먼저 검색한 뒤 실제 업무와 채용의도를 분석합니다.")
 
-        if st.button("채용직무분석 실행 / 다시 분석", type="primary", use_container_width=True, disabled=not bool(sources)):
+        if st.button("채용자료 자동검색 + 채용직무분석 실행 / 다시 분석", type="primary", use_container_width=True):
             try:
                 ins = instruction_context(USER_ID, project["id"], "job")
-                with st.spinner("공고의 필수조건·업무·지원조직·채용의도를 분석하고 있습니다..."):
+                with st.spinner("최신 채용공고·직무기술서·지원조직 자료를 웹에서 찾고 있습니다..."):
+                    web_research = research_job_sources(
+                        project["company"], project["position"], project.get("team") or "", ins
+                    )
+                    saved_count = save_auto_research_results(USER_ID, project["id"], web_research.get("results") or [])
+                    sources = list_sources(USER_ID, project["id"])
+                if not sources:
+                    raise RuntimeError("웹 검색에서 채용·직무 근거를 확보하지 못했습니다. 기업명/직무명을 확인해주세요.")
+                with st.spinner("수집한 채용 근거에서 실제 업무·필수조건·지원조직·채용의도를 분석하고 있습니다..."):
                     result = generate_json(job_analysis_prompt(
                         project["company"], project["position"], project.get("team") or "", sources, company_data, ins
                     ))
+                result["web_research_queries"] = web_research.get("queries") or []
+                result["auto_sources_added"] = saved_count
                 save_analysis_section(USER_ID, project["id"], "job", result)
-                st.success("채용직무분석을 저장했습니다.")
+                st.success(f"채용직무분석을 저장했습니다. 자동 웹 근거 {saved_count}개를 새로 저장했습니다.")
                 rerun()
             except Exception as e:
                 st.error(f"채용직무분석 실패: {e}")
@@ -860,9 +912,11 @@ with evidence_tab:
         search_col, url_col, text_col = st.tabs(["자동 검색", "URL 가져오기", "본문 직접 저장"])
         with search_col:
             if recruiting_search_available():
-                if st.button("웹에서 관련 채용자료 찾기", type="primary", use_container_width=True):
+                st.caption("별도 검색 API가 필요하지 않습니다. 기존 GEMINI_API_KEY의 Google Search grounding을 사용합니다.")
+                if st.button("Google Search로 관련 채용자료 찾기", type="primary", use_container_width=True):
                     try:
-                        with st.spinner("기업·직무·지원조직 관련 자료를 찾고 있습니다..."):
+                        ins = instruction_context(USER_ID, project["id"], "job")
+                        with st.spinner("기업·직무·지원조직 관련 공개 웹 자료를 검색하고 있습니다..."):
                             st.session_state.recruit_search_results = search_recruiting_sources(
                                 project.get("company") or "", project.get("position") or "", project.get("team") or ""
                             )
@@ -870,19 +924,20 @@ with evidence_tab:
                         st.error(f"검색 실패: {e}")
                 for idx, item in enumerate(st.session_state.recruit_search_results):
                     with st.expander(f"{idx+1}. {item.get('title') or '검색결과'}"):
-                        st.caption(item.get("url") or "")
-                        st.write((item.get("snippet") or "")[:700])
+                        st.caption(item.get("url") or "Google Search 기반 종합 리서치")
+                        st.write((item.get("snippet") or "")[:1000])
+                        default_type = item.get("source_type") or "Google Search 근거"
                         stype = st.selectbox(
                             "자료 유형",
-                            ["공식 채용공고", "공식 직무기술서", "공식 회사자료", "공식 직무인터뷰", "과거 채용공고", "채용 플랫폼", "언론/산업자료", "기타"],
+                            [default_type, "공식 채용공고", "공식 직무기술서", "공식 회사자료", "공식 직무인터뷰", "과거 채용공고", "채용 플랫폼", "언론/산업자료", "기타"],
                             key=f"search_stype_{idx}",
                         )
                         if st.button("이 자료 저장", key=f"save_search_{idx}"):
-                            trust = "official" if stype.startswith("공식") else "supported"
+                            trust = "official" if stype.startswith("공식") else (item.get("trust_level") or "supported")
                             add_source(USER_ID, project["id"], stype, item.get("title") or stype, item.get("content") or item.get("snippet") or "", item.get("url") or "", trust)
                             rerun()
             else:
-                st.info("TAVILY_API_KEY를 설정하면 자동 검색을 사용할 수 있습니다. URL 또는 본문 직접 저장은 바로 사용할 수 있습니다.")
+                st.info("GEMINI_API_KEY가 설정되면 자동 Google Search를 사용할 수 있습니다.")
 
         with url_col:
             with st.form("url_source_form"):
