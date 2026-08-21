@@ -81,3 +81,94 @@ def generate_json(prompt: str, model: str | None = None, temperature: float = 0.
         ),
     )
     return _extract_json(response.text or "")
+
+
+def _support_segments_by_chunk(response) -> dict[int, list[str]]:
+    """Map grounding chunk index -> response text segments supported by that source."""
+    result: dict[int, list[str]] = {}
+    try:
+        candidate = response.candidates[0]
+        metadata = candidate.grounding_metadata
+        supports = metadata.grounding_supports or []
+        for support in supports:
+            segment = getattr(support, "segment", None)
+            segment_text = (getattr(segment, "text", "") or "").strip()
+            if not segment_text:
+                continue
+            indices = getattr(support, "grounding_chunk_indices", None) or []
+            for idx in indices:
+                result.setdefault(int(idx), [])
+                if segment_text not in result[int(idx)]:
+                    result[int(idx)].append(segment_text)
+    except Exception:
+        return {}
+    return result
+
+
+def generate_grounded_research(
+    prompt: str,
+    model: str | None = None,
+    temperature: float = 0.15,
+) -> dict:
+    """Run Gemini with Google Search grounding and return research text + citations.
+
+    This uses the same GEMINI_API_KEY as the rest of the app. No Tavily key is required.
+    """
+    from google.genai import types
+
+    client = get_ai_client()
+    grounding_tool = types.Tool(google_search=types.GoogleSearch())
+    response = client.models.generate_content(
+        model=get_model_name(model),
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=temperature,
+            tools=[grounding_tool],
+        ),
+    )
+
+    text = (response.text or "").strip()
+    sources: list[dict] = []
+    queries: list[str] = []
+    search_entry_html = ""
+    segment_map = _support_segments_by_chunk(response)
+
+    try:
+        candidate = response.candidates[0]
+        metadata = candidate.grounding_metadata
+        queries = list(getattr(metadata, "web_search_queries", None) or [])
+        entry = getattr(metadata, "search_entry_point", None)
+        search_entry_html = (getattr(entry, "rendered_content", "") or "").strip()
+        chunks = getattr(metadata, "grounding_chunks", None) or []
+        seen = set()
+        for idx, chunk in enumerate(chunks):
+            web = getattr(chunk, "web", None)
+            if not web:
+                continue
+            url = (getattr(web, "uri", "") or "").strip()
+            title = (getattr(web, "title", "") or "").strip() or "Google Search source"
+            key = (url, title)
+            if key in seen:
+                continue
+            seen.add(key)
+            segments = segment_map.get(idx, [])
+            sources.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "content": "\n\n".join(segments).strip(),
+                    "snippet": " ".join(segments)[:1200].strip(),
+                    "source_type": "Google Search 근거",
+                    "trust_level": "supported",
+                }
+            )
+    except Exception:
+        # The grounded synthesis itself remains useful even if metadata is absent.
+        pass
+
+    return {
+        "text": text,
+        "sources": sources,
+        "queries": queries,
+        "search_entry_html": search_entry_html,
+    }
