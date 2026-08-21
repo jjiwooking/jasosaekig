@@ -8,7 +8,7 @@ from typing import Any
 import streamlit as st
 
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.6-flash"
 
 
 @st.cache_resource
@@ -47,12 +47,19 @@ def _extract_json(text: str) -> Any:
     raise ValueError("AI 응답에서 JSON을 찾지 못했습니다.")
 
 
-def generate_text(prompt: str, model: str = DEFAULT_MODEL, temperature: float = 0.35) -> str:
+def get_model_name(model: str | None = None) -> str:
+    if model:
+        return model
+    configured = os.getenv("GEMINI_MODEL") or st.secrets.get("GEMINI_MODEL", "")
+    return str(configured).strip() or DEFAULT_MODEL
+
+
+def generate_text(prompt: str, model: str | None = None, temperature: float = 0.35) -> str:
     from google.genai import types
 
     client = get_ai_client()
     response = client.models.generate_content(
-        model=model,
+        model=get_model_name(model),
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=temperature,
@@ -61,12 +68,12 @@ def generate_text(prompt: str, model: str = DEFAULT_MODEL, temperature: float = 
     return (response.text or "").strip()
 
 
-def generate_json(prompt: str, model: str = DEFAULT_MODEL, temperature: float = 0.2) -> Any:
+def generate_json(prompt: str, model: str | None = None, temperature: float = 0.2) -> Any:
     from google.genai import types
 
     client = get_ai_client()
     response = client.models.generate_content(
-        model=model,
+        model=get_model_name(model),
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=temperature,
