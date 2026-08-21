@@ -167,6 +167,34 @@ def delete_source(user_id: str, project_id: str, source_id: str) -> None:
     ).eq("id", source_id).execute()
 
 
+def update_source(
+    user_id: str,
+    project_id: str,
+    source_id: str,
+    *,
+    source_type: str | None = None,
+    title: str | None = None,
+    content: str | None = None,
+    url: str | None = None,
+    trust_level: str | None = None,
+) -> None:
+    payload = {}
+    if source_type is not None:
+        payload["source_type"] = source_type
+    if title is not None:
+        payload["title"] = title
+    if content is not None:
+        payload["content"] = content
+    if url is not None:
+        payload["url"] = url or None
+    if trust_level is not None:
+        payload["trust_level"] = trust_level
+    if payload:
+        get_supabase().table("project_sources").update(payload).eq("user_id", user_id).eq(
+            "project_id", project_id
+        ).eq("id", source_id).execute()
+
+
 # ---------------- Analyses: one JSON record, separate sections ----------------
 def get_analysis(user_id: str, project_id: str) -> dict:
     rows = get_supabase().table("project_analyses").select("analysis").eq(
